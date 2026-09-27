@@ -167,6 +167,32 @@ footer{
   margin-top:30px; font-size:11px; color:var(--ink-soft); line-height:1.6;
   border-top:1px solid var(--line); padding-top:14px;
 }
+
+select{
+  font-family:'IBM Plex Mono',monospace;
+  padding:7px 9px; border:1px solid var(--line);
+  background:var(--paper); color:var(--ink); border-radius:2px; font-size:13px;
+  max-width:100%;
+}
+.params{display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:14px; margin-bottom:14px;}
+.params > div{display:flex; flex-direction:column; gap:4px;}
+.hint{font-size:11px; color:var(--ink-soft); line-height:1.45;}
+details.advanced{margin:4px 0 14px; font-size:12px;}
+details.advanced summary{cursor:pointer; color:var(--ink-soft);}
+details.advanced .params{margin-top:10px;}
+[hidden]{display:none !important;}
+.print-only{display:none;}
+
+@media print{
+  body{background:#fff; padding:0;}
+  .contours, header .eyebrow, header p, #step1, #step2, #step3, .result-actions, footer, #map{display:none !important;}
+  header{border:none; margin-bottom:8px;}
+  .step{border:none; background:none; padding:0;}
+  .step-num{display:none;}
+  .print-only{display:block; font-size:13px; margin-bottom:10px;}
+  tbody tr:hover{background:none;}
+  th,td{padding:5px 6px;}
+}
 </style>
 </head>
 <body>
@@ -200,20 +226,54 @@ footer{
   <div class="step disabled" id="step2">
     <span class="step-num">2</span>
     <h2>Paramètres</h2>
-    <div class="row">
+    <div class="params">
       <div>
-        <label class="field-label" for="stepInput">Pas d'échantillonnage (m)</label><br>
-        <input type="number" id="stepInput" value="400" min="100" max="2000" step="50">
+        <label class="field-label" for="methodSelect">Méthode</label>
+        <select id="methodSelect">
+          <option value="overpass">Rapide</option>
+          <option value="nominatim">Lente (point par point)</option>
+        </select>
+        <span class="hint" id="methodHint"></span>
       </div>
       <div>
-        <label class="field-label" for="alertInput">Alerte avant pancarte (m)</label><br>
+        <label class="field-label" for="styleSelect">Noms des waypoints</label>
+        <select id="styleSelect">
+          <option value="full">Complets</option>
+          <option value="compact">GPS compact</option>
+        </select>
+        <span class="hint">Complets : « Entrée Saint-Herblain ». Compact : « St-Herblain », sans accents ni emoji, 15 caractères max (Garmin, Wahoo).</span>
+      </div>
+      <div>
+        <label class="field-label" for="alertInput">Alerte avant pancarte (m)</label>
         <input type="number" id="alertInput" value="500" min="0" max="5000" step="50">
+        <span class="hint">0 pour désactiver. Modifiable après l'analyse.</span>
       </div>
+      <div id="stepField" hidden>
+        <label class="field-label" for="stepInput">Pas d'échantillonnage (m)</label>
+        <input type="number" id="stepInput" value="400" min="100" max="2000" step="50">
+        <span class="hint">Plus petit = passages courts mieux détectés, mais plus long.</span>
+      </div>
+    </div>
+    <details class="advanced">
+      <summary>Options avancées</summary>
+      <div class="params">
+        <div>
+          <label class="field-label" for="minStayInput">Passage minimal (m)</label>
+          <input type="number" id="minStayInput" value="50" min="0" max="1000" step="10">
+          <span class="hint">Ignore les incursions plus courtes (route qui longe une limite).</span>
+        </div>
+        <div>
+          <label class="field-label" for="levelInput">Niveau administratif OSM</label>
+          <input type="number" id="levelInput" value="8" min="2" max="11" step="1">
+          <span class="hint">8 = commune en France, Belgique, Suisse, Italie, Espagne… (méthode rapide).</span>
+        </div>
+      </div>
+    </details>
+    <div class="row">
       <button id="launchBtn">Lancer l'analyse</button>
       <button class="ghost" id="stopBtn" style="display:none;">Arrêter</button>
     </div>
     <div class="estimate" id="estimate"></div>
-    <div class="estimate" style="margin-top:4px;">Un pas plus petit détecte mieux les passages courts dans une commune, mais allonge l'analyse. Mets 0 en alerte pour la désactiver (modifiable après l'analyse, sans la relancer).</div>
   </div>
 
   <div class="step disabled" id="step3">
@@ -229,35 +289,65 @@ footer{
   <div class="step disabled" id="step4">
     <span class="step-num">4</span>
     <h2>Résultat <span class="badge" id="countBadge" style="display:none;"></span></h2>
+    <div class="print-only" id="printTitle"></div>
     <div id="resultsArea"><div class="empty-note">Les entrées de commune détectées apparaîtront ici.</div></div>
     <div class="result-actions" id="downloadArea" style="display:none;">
       <button class="secondary" id="downloadBtn">Télécharger le GPX enrichi</button>
+      <button class="secondary" id="csvBtn">CSV</button>
+      <button class="secondary" id="printBtn">Imprimer le roadbook</button>
     </div>
   </div>
 
   <footer>
-    Géocodage inverse via l'API publique Nominatim (OpenStreetMap), utilisée dans les limites de son usage raisonnable (~1 requête/s). Pour un tracé de plusieurs dizaines de km, l'analyse peut prendre quelques minutes — laisse l'onglet ouvert.
+    Données © contributeurs OpenStreetMap. Méthode rapide : limites communales téléchargées en une requête via l'API Overpass, puis calcul local des franchissements (précision ~1 m). Méthode lente : géocodage inverse point par point via Nominatim (~1 requête/s) — utilisée automatiquement si Overpass ne répond pas.
     Le fichier exporté conserve l'intégralité du GPX d'origine (horodatages, waypoints existants, extensions) ; seuls les waypoints de pancarte et d'alerte sont ajoutés.
   </footer>
 </div>
 
+<script src="core.js"></script>
 <script>
+const Core = window.PancarteCore;
 const REQ_INTERVAL = 1100;     // ms minimum entre deux requêtes Nominatim
-const PRECISION = 10;          // m : précision de positionnement d'une frontière
+const NOMINATIM_PRECISION = 10; // m
+const LOCAL_STEP = 10;         // m : pas d'échantillonnage avec les limites téléchargées
+const LOCAL_PRECISION = 1;     // m
 const MIN_STEP = 100;
+// Serveurs essayés dans l'ordre (les erreurs 504/429 passagères sont fréquentes)
+const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass-api.de/api/interpreter'
+];
+const SYM = {sign:'City (Small)', alert:'Danger Area'}; // noms de symboles Garmin, reconnus par la plupart des applis
 
 let srcDoc = null, trkpts = [], cum = [], trackName = "Track", srcFileName = "track";
-let foundWaypoints = [], alertWaypoints = [], finalGpxText = "";
-let running = false, stopRequested = false;
+let crossings = [], foundWaypoints = [], alertWaypoints = [], finalGpxText = "";
+let running = false, stopRequested = false, currentAbort = null;
 const geoCache = new Map();
 
 const $ = id => document.getElementById(id);
 const fileInput = $('fileInput'), dropzone = $('dropzone'), dzText = $('dzText');
 const step1 = $('step1'), step2 = $('step2'), step3 = $('step3'), step4 = $('step4');
-const stepInput = $('stepInput'), alertInput = $('alertInput'), estimate = $('estimate');
-const launchBtn = $('launchBtn'), stopBtn = $('stopBtn');
+const methodSelect = $('methodSelect'), styleSelect = $('styleSelect');
+const stepInput = $('stepInput'), alertInput = $('alertInput'), minStayInput = $('minStayInput'), levelInput = $('levelInput');
+const estimate = $('estimate'), launchBtn = $('launchBtn'), stopBtn = $('stopBtn');
 const barFill = $('barFill'), progressLabel = $('progressLabel'), progressPct = $('progressPct'), logEl = $('log');
-const resultsArea = $('resultsArea'), downloadArea = $('downloadArea'), downloadBtn = $('downloadBtn'), countBadge = $('countBadge');
+const resultsArea = $('resultsArea'), downloadArea = $('downloadArea'), countBadge = $('countBadge');
+
+// ---------- Préférences (mémorisées localement) ----------
+const PREF_FIELDS = {methodSelect, styleSelect, stepInput, alertInput, minStayInput, levelInput};
+try{
+  const prefs = JSON.parse(localStorage.getItem('pancartes-prefs') || '{}');
+  Object.entries(prefs).forEach(([k,v]) => { if(PREF_FIELDS[k]) PREF_FIELDS[k].value = v; });
+}catch(e){}
+function savePrefs(){
+  try{
+    const prefs = {};
+    Object.entries(PREF_FIELDS).forEach(([k,el]) => prefs[k] = el.value);
+    localStorage.setItem('pancartes-prefs', JSON.stringify(prefs));
+  }catch(e){}
+}
+Object.values(PREF_FIELDS).forEach(el => el.addEventListener('change', savePrefs));
 
 // ---------- Carte ----------
 let map = null, trackLayer = null, markerLayer = null;
@@ -330,67 +420,76 @@ function parseGPX(text){
   if(parsed.length < 2) throw new Error("pas assez de points valides");
 
   const root = doc.documentElement;
-  const nameEl = childByTag(firstChildByTag(root,'trk') || firstChildByTag(root,'rte'), 'name')
-              || childByTag(firstChildByTag(root,'metadata'), 'name');
+  const nameEl = childByTag(childByTag(root,'trk') || childByTag(root,'rte'), 'name')
+              || childByTag(childByTag(root,'metadata'), 'name');
   srcDoc = doc;
   trkpts = parsed;
   trackName = nameEl && nameEl.textContent.trim() ? nameEl.textContent.trim() : srcFileName;
-  cum = [0];
-  for(let i=1;i<trkpts.length;i++){
-    cum.push(cum[i-1] + haversine(trkpts[i-1], trkpts[i]));
-  }
+  cum = Core.cumulativeDistances(trkpts);
 }
-function firstChildByTag(parent, tag){
+function childByTag(parent, tag){
   if(!parent) return null;
   return Array.from(parent.children).find(c => c.localName === tag) || null;
 }
-const childByTag = firstChildByTag;
 
-function haversine(a,b){
-  const R = 6371000;
-  const toRad = x => x*Math.PI/180;
-  const dLat = toRad(b.lat-a.lat), dLon = toRad(b.lon-a.lon);
-  const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)**2;
-  return 2*R*Math.atan2(Math.sqrt(s), Math.sqrt(1-s));
-}
-
-function pointAtDistance(target){
-  const total = cum[cum.length-1];
-  if(target<=0) return trkpts[0];
-  if(target>=total) return trkpts[trkpts.length-1];
-  let lo=0, hi=cum.length-1;
-  while(lo<hi){
-    const mid=(lo+hi)>>1;
-    if(cum[mid]<target) lo=mid+1; else hi=mid;
-  }
-  const i=lo, i0=i-1;
-  const segLen = cum[i]-cum[i0];
-  const t = segLen===0 ? 0 : (target-cum[i0])/segLen;
-  return {
-    lat: trkpts[i0].lat + t*(trkpts[i].lat-trkpts[i0].lat),
-    lon: trkpts[i0].lon + t*(trkpts[i].lon-trkpts[i0].lon)
-  };
-}
-
-function getStep(){
-  return Math.max(MIN_STEP, parseFloat(stepInput.value) || 400);
-}
+const totalDist = () => cum[cum.length-1];
+const pointAtDistance = d => Core.pointAtDistance(trkpts, cum, d);
+const getStep = () => Math.max(MIN_STEP, parseFloat(stepInput.value) || 400);
 
 function updateEstimate(){
+  const slow = methodSelect.value === 'nominatim';
+  $('stepField').hidden = !slow;
+  $('methodHint').textContent = slow
+    ? "Interroge Nominatim tous les N mètres. Plusieurs minutes pour 100 km."
+    : "Télécharge les limites des communes traversées en une fois. Quelques secondes, précision ~1 m.";
   if(!cum.length) return;
-  const total = cum[cum.length-1];
-  const nSamples = Math.ceil(total/getStep())+1;
-  const seconds = nSamples*REQ_INTERVAL/1000;
-  estimate.innerHTML = `Distance totale : <b>${(total/1000).toFixed(1)} km</b> — ~<b>${nSamples}</b> requêtes de base, estimation <b>~${Math.ceil(seconds/60)} min</b> (+ affinage aux frontières détectées).`;
+  const total = totalDist();
+  let txt = `Distance totale : <b>${(total/1000).toFixed(1)} km</b> — `;
+  if(slow){
+    const nSamples = Math.ceil(total/getStep())+1;
+    txt += `~<b>${nSamples}</b> requêtes de base, estimation <b>~${Math.ceil(nSamples*REQ_INTERVAL/60000)} min</b> (+ affinage aux frontières détectées).`;
+  }else{
+    txt += `analyse rapide, en général <b>moins de 30 s</b>.`;
+  }
+  estimate.innerHTML = txt;
 }
 stepInput.addEventListener('input', updateEstimate);
+methodSelect.addEventListener('change', updateEstimate);
+updateEstimate();
 
-// ---------- Géocodage (Nominatim) ----------
+// ---------- Réseau ----------
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-
 class StopError extends Error {}
-let lastRequestAt = 0;
 
+// Limites communales le long du tracé via Overpass. Renvoie null si aucun serveur ne répond.
+async function fetchCommunes(){
+  const level = Math.round(parseFloat(levelInput.value)) || 8;
+  const query = Core.buildOverpassQuery(trkpts, level);
+  for(const [i, url] of OVERPASS_URLS.entries()){
+    if(i>0) await sleep(3000);
+    if(stopRequested) throw new StopError();
+    const host = new URL(url).host;
+    const ctrl = new AbortController();
+    currentAbort = ctrl;
+    const timer = setTimeout(()=>ctrl.abort(), 120000);
+    try{
+      logMsg(`Téléchargement des limites communales (${host})…`);
+      const resp = await fetch(url, {method:'POST', body:new URLSearchParams({data:query}), signal:ctrl.signal});
+      if(!resp.ok) throw new Error('HTTP '+resp.status);
+      const json = await resp.json();
+      return Core.communesFromOverpass(json);
+    }catch(e){
+      if(stopRequested) throw new StopError();
+      logMsg(`⚠ ${host} : ${e.name==='AbortError' ? 'délai dépassé' : e.message}`);
+    }finally{
+      clearTimeout(timer);
+      currentAbort = null;
+    }
+  }
+  return null;
+}
+
+let lastRequestAt = 0;
 async function throttledFetch(url){
   const wait = lastRequestAt + REQ_INTERVAL - Date.now();
   if(wait > 0) await sleep(wait);
@@ -409,7 +508,6 @@ async function reverseGeocode(lat, lon){
   for(let attempt=0; ; attempt++){
     try{
       const resp = await throttledFetch(url);
-      if(resp.status === 429 || resp.status >= 500) throw new Error('Nominatim HTTP '+resp.status);
       if(!resp.ok) throw new Error('Nominatim HTTP '+resp.status);
       const data = await resp.json();
       const a = data.address || {};
@@ -456,21 +554,32 @@ function setProgress(pct, label){
   progressPct.textContent = pct+"%";
   if(label) progressLabel.textContent = label;
 }
+function download(text, type, filename){
+  const blob = new Blob([text], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
 
 // ---------- Analyse ----------
 launchBtn.addEventListener('click', runAnalysis);
 stopBtn.addEventListener('click', ()=>{
   stopRequested = true;
   stopBtn.disabled = true;
+  if(currentAbort) currentAbort.abort();
   progressLabel.textContent = "Arrêt en cours…";
 });
 
 function resetResults(){
-  foundWaypoints = []; alertWaypoints = []; finalGpxText = "";
+  crossings = []; foundWaypoints = []; alertWaypoints = []; finalGpxText = "";
   resultsArea.innerHTML = '<div class="empty-note">Les entrées de commune détectées apparaîtront ici.</div>';
   downloadArea.style.display = "none";
   countBadge.style.display = "none";
   step4.classList.add('disabled');
+  if(markerLayer) markerLayer.clearLayers();
 }
 
 async function runAnalysis(){
@@ -484,100 +593,97 @@ async function runAnalysis(){
   step4.classList.remove('disabled');
   logEl.innerHTML = "";
   resultsArea.innerHTML = '<div class="empty-note">Analyse en cours…</div>';
-  setProgress(0, "Échantillonnage…");
+  setProgress(0, "Démarrage…");
 
   try{
     await analyse();
     setProgress(100, "Terminé");
   }catch(e){
-    if(!(e instanceof StopError)) throw e;
-    progressLabel.textContent = "Analyse interrompue — résultats partiels";
-    logMsg("■ analyse interrompue par l'utilisateur");
+    if(e instanceof StopError){
+      progressLabel.textContent = "Analyse interrompue — résultats partiels";
+      logMsg("■ analyse interrompue par l'utilisateur");
+    }else{
+      progressLabel.textContent = "Erreur : " + e.message;
+      logMsg("✖ " + e.message);
+      console.error(e);
+    }
   }finally{
     running = false;
     launchBtn.disabled = false;
     stopBtn.style.display = 'none';
     step1.classList.remove('disabled');
-    rebuildAlertsAndOutput();
+    buildWaypoints();
   }
 }
 
 async function analyse(){
-  const step = getStep();
-  const total = cum[cum.length-1];
-  const samples = [];
-  for(let d=0; d<total; d+=step) samples.push(d);
-  samples.push(total);
+  const total = totalDist();
+  const onCrossing = c => {
+    crossings.push(c);
+    logMsg(`→ frontière à ${(c.dist/1000).toFixed(2)} km : ${c.from} → ${c.to}`);
+  };
 
-  // 1) Échantillonnage grossier
-  const coarse = [];
+  if(methodSelect.value === 'overpass'){
+    setProgress(5, "Téléchargement des limites communales…");
+    const communes = await fetchCommunes();
+    if(communes && communes.length){
+      logMsg(`${communes.length} commune${communes.length>1?'s':''} chargée${communes.length>1?'s':''}.`);
+      const locate = Core.makeLocator(communes);
+      setProgress(40, "Calcul des franchissements…");
+      await sleep(0);
+      await Core.findCrossings(d => locate(pointAtDistance(d)), total, LOCAL_STEP, LOCAL_PRECISION, {
+        onSample: async (i, n) => {
+          if(i % 2000 === 0){
+            if(stopRequested) throw new StopError();
+            setProgress(40 + Math.round(i/n*55));
+            await sleep(0); // laisse le navigateur rafraîchir l'affichage
+          }
+        },
+        onCrossing
+      });
+      return;
+    }
+    logMsg(communes ? "Aucune limite communale trouvée → bascule sur la méthode lente." : "Overpass indisponible → bascule sur la méthode lente.");
+  }
+
+  // Méthode lente : Nominatim point par point
   const t0 = Date.now();
-  for(let i=0;i<samples.length;i++){
-    const d = samples[i];
-    const commune = await communeAt(d);
-    coarse.push({dist:d, commune});
-    const pct = Math.round(((i+1)/samples.length)*70);
-    const remaining = (Date.now()-t0)/(i+1) * (samples.length-i-1) / 1000;
-    setProgress(pct, `Échantillonnage — ${(d/1000).toFixed(1)} / ${(total/1000).toFixed(1)} km · reste ~${formatDuration(remaining)}`);
-    if(commune) logMsg(`${(d/1000).toFixed(2)} km — ${commune}`);
-  }
-
-  // 2) Transitions entre échantillons connus (on saute ceux en erreur réseau)
-  const known = coarse.filter(c => c.commune);
-  const transitions = [];
-  for(let i=1;i<known.length;i++){
-    if(known[i].commune !== known[i-1].commune) transitions.push([known[i-1], known[i]]);
-  }
-
-  // 3) Affinage par dichotomie de chaque transition
-  for(let t=0; t<transitions.length; t++){
-    const [a, b] = transitions[t];
-    setProgress(70 + Math.round((t/transitions.length)*30), `Affinage — frontière ${t+1}/${transitions.length}`);
-    const crossings = [];
-    await refine(a.dist, a.commune, b.dist, b.commune, crossings);
-    crossings.forEach(c=>{
-      const pt = pointAtDistance(c.dist);
-      foundWaypoints.push({dist:c.dist, lat:pt.lat, lon:pt.lon, name:`Entrée ${c.to}`, from:c.from, to:c.to});
-      logMsg(`→ frontière à ${(c.dist/1000).toFixed(2)} km : ${c.from} → ${c.to}`);
-    });
-  }
+  await Core.findCrossings(communeAt, total, getStep(), NOMINATIM_PRECISION, {
+    onSample: (i, n, d, name) => {
+      const remaining = (Date.now()-t0)/(i+1) * (n-i-1) / 1000;
+      setProgress(Math.round((i+1)/n*70), `Échantillonnage — ${(d/1000).toFixed(1)} / ${(total/1000).toFixed(1)} km · reste ~${formatDuration(remaining)}`);
+      if(name) logMsg(`${(d/1000).toFixed(2)} km — ${name}`);
+    },
+    onTransition: (t, n) => setProgress(70 + Math.round(t/n*30), `Affinage — frontière ${t+1}/${n}`),
+    onCrossing
+  });
 }
 
-// Recherche la position de la frontière entre loD (commune loName) et hiD (commune hiName).
-// Si un point intermédiaire tombe dans une 3e commune, les deux sous-intervalles sont affinés.
-async function refine(loD, loName, hiD, hiName, out){
-  if(hiD - loD <= PRECISION){
-    out.push({dist:hiD, from:loName, to:hiName});
-    return;
-  }
-  const mid = (loD+hiD)/2;
-  const name = await communeAt(mid);
-  if(name === hiName){
-    await refine(loD, loName, mid, hiName, out);
-  }else if(name === loName || !name){
-    await refine(mid, loName, hiD, hiName, out);
-  }else{
-    await refine(loD, loName, mid, name, out);
-    await refine(mid, name, hiD, hiName, out);
-  }
-}
+// ---------- Waypoints & résultats ----------
+alertInput.addEventListener('input', ()=>{ if(!running && crossings.length) buildWaypoints(); });
+minStayInput.addEventListener('input', ()=>{ if(!running && crossings.length) buildWaypoints(); });
+styleSelect.addEventListener('change', ()=>{ if(!running && crossings.length) buildWaypoints(); });
 
-// ---------- Alertes & résultats ----------
-alertInput.addEventListener('input', ()=>{ if(!running && foundWaypoints.length) rebuildAlertsAndOutput(); });
+// Construit pancartes et alertes à partir des frontières brutes (sans relancer l'analyse).
+function buildWaypoints(){
+  const style = styleSelect.value;
+  const minStay = Math.max(0, parseFloat(minStayInput.value) || 0);
+  const kept = Core.filterShortRuns([...crossings].sort((a,b)=>a.dist-b.dist), totalDist(), minStay);
+  foundWaypoints = kept.map(c => {
+    const pt = pointAtDistance(c.dist);
+    return {dist:c.dist, lat:pt.lat, lon:pt.lon, from:c.from, to:c.to, isAlert:false,
+            name:Core.waypointName('sign', c.to, style)};
+  });
 
-function rebuildAlertsAndOutput(){
-  // Waypoints d'alerte placés `alertDist` mètres avant chaque frontière détectée
+  // Waypoints d'alerte placés `alertDist` mètres avant chaque frontière
   alertWaypoints = [];
-  const alertDist = Math.max(0, parseFloat(alertInput.value) || 0);
+  const alertDist = Math.max(0, Math.round(parseFloat(alertInput.value) || 0));
   if(alertDist > 0){
     foundWaypoints.forEach(w=>{
       const d = Math.max(0, w.dist - alertDist);
       const pt = pointAtDistance(d);
-      alertWaypoints.push({
-        dist:d, lat:pt.lat, lon:pt.lon,
-        name:`⚠ ${alertDist}m avant : ${w.to}`,
-        to:w.to, isAlert:true
-      });
+      alertWaypoints.push({dist:d, lat:pt.lat, lon:pt.lon, from:w.from, to:w.to, isAlert:true, signDist:w.dist,
+                           name:Core.waypointName('alert', w.to, style, alertDist)});
     });
   }
   renderResults();
@@ -595,13 +701,14 @@ function renderResults(){
   countBadge.textContent = foundWaypoints.length + " pancarte" + (foundWaypoints.length>1?"s":"") +
     (alertWaypoints.length ? ` + ${alertWaypoints.length} alerte${alertWaypoints.length>1?"s":""}` : "");
 
-  const merged = [...foundWaypoints.map(w=>({...w,isAlert:false})), ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
+  const merged = [...foundWaypoints, ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
   showMarkersOnMap(merged);
 
-  let html = '<div class="table-wrap"><table><thead><tr><th>Km</th><th>Type</th><th>Commune</th><th>Lat</th><th>Lon</th></tr></thead><tbody>';
+  $('printTitle').textContent = `${trackName} — ${(totalDist()/1000).toFixed(1)} km`;
+  let html = '<div class="table-wrap"><table><thead><tr><th>Km</th><th>Type</th><th>Commune</th><th>Nom GPS</th></tr></thead><tbody>';
   merged.forEach((w,i)=>{
     const type = w.isAlert ? '⚠ alerte' : '🚩 pancarte';
-    html += `<tr data-i="${i}"><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.to)}</td><td>${w.lat.toFixed(5)}</td><td>${w.lon.toFixed(5)}</td></tr>`;
+    html += `<tr data-i="${i}"><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.to)}</td><td>${escapeHtml(w.name)}</td></tr>`;
   });
   html += '</tbody></table></div>';
   resultsArea.innerHTML = html;
@@ -616,34 +723,32 @@ function renderResults(){
     });
   });
 
-  finalGpxText = buildGPX();
+  finalGpxText = buildGPX(merged);
   downloadArea.style.display = "flex";
 }
 
 // Ajoute les waypoints au GPX d'origine (tout le reste est conservé tel quel).
-function buildGPX(){
+function buildGPX(wpts){
   const doc = srcDoc.cloneNode(true);
   const root = doc.documentElement;
   const ns = root.namespaceURI || 'http://www.topografix.com/GPX/1/1';
   // Ordre imposé par le schéma GPX : metadata, wpt, rte, trk, extensions
   const anchor = Array.from(root.children).find(c => ['rte','trk','extensions'].includes(c.localName)) || null;
 
-  const allWpts = [
-    ...foundWaypoints.map(w=>({...w, sym:'City', type:'Pancarte'})),
-    ...alertWaypoints.map(w=>({...w, sym:'Waypoint-caution', type:'Alerte pancarte'}))
-  ].sort((a,b)=>a.dist-b.dist);
-
   const el = (tag, text) => { const e = doc.createElementNS(ns, tag); if(text!=null) e.textContent = text; return e; };
-  allWpts.forEach(w=>{
+  wpts.forEach(w=>{
+    const km = (w.dist/1000).toFixed(2);
+    const desc = w.isAlert
+      ? `km ${km} — entrée dans ${w.to} dans ${Math.round(w.signDist-w.dist)} m`
+      : `km ${km} — entrée dans ${w.to}` + (w.from ? ` (depuis ${w.from})` : '');
     const wpt = el('wpt');
     wpt.setAttribute('lat', w.lat.toFixed(6));
     wpt.setAttribute('lon', w.lon.toFixed(6));
-    wpt.appendChild(doc.createTextNode('\n    '));
-    wpt.appendChild(el('name', w.name));
-    wpt.appendChild(doc.createTextNode('\n    '));
-    wpt.appendChild(el('sym', w.sym));
-    wpt.appendChild(doc.createTextNode('\n    '));
-    wpt.appendChild(el('type', w.type));
+    [['name', w.name], ['desc', desc], ['sym', w.isAlert ? SYM.alert : SYM.sign], ['type', w.isAlert ? 'Alerte pancarte' : 'Pancarte']]
+      .forEach(([tag, text]) => {
+        wpt.appendChild(doc.createTextNode('\n    '));
+        wpt.appendChild(el(tag, text));
+      });
     wpt.appendChild(doc.createTextNode('\n  '));
     root.insertBefore(doc.createTextNode('\n  '), anchor);
     root.insertBefore(wpt, anchor);
@@ -654,16 +759,14 @@ function buildGPX(){
   if(!xml.startsWith('<?xml')) xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml;
   return xml;
 }
-
-downloadBtn.addEventListener('click', ()=>{
-  const blob = new Blob([finalGpxText], {type:'application/gpx+xml'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = srcFileName + "_pancartes.gpx";
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+$('downloadBtn').addEventListener('click', ()=>{
+  download(finalGpxText, 'application/gpx+xml', srcFileName + "_pancartes.gpx");
 });
+$('csvBtn').addEventListener('click', ()=>{
+  const rows = [...foundWaypoints, ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
+  download(Core.toCSV(rows), 'text/csv;charset=utf-8', srcFileName + "_pancartes.csv");
+});
+$('printBtn').addEventListener('click', ()=>window.print());
 </script>
 </body>
 </html>
