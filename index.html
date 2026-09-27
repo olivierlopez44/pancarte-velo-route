@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Pancartes d'entrée de commune — GPX</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --paper:#F5F1E7;
+  --paper-2:#EDE7D8;
+  --ink:#242A20;
+  --ink-soft:#5A5F51;
+  --trail:#B85A2A;
+  --trail-dark:#8F4520;
+  --forest:#3E5C43;
+  --contour:#D3CBB2;
+  --line:#CBC2A6;
+  --ok:#3E5C43;
+  --err:#A23E2E;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'IBM Plex Mono',monospace;
+  min-height:100vh;
+  padding:32px 20px 60px;
+}
+
+.contours{
+  position:fixed; inset:0; z-index:0; pointer-events:none; opacity:0.5;
+}
+
+.wrap{
+  position:relative; z-index:1;
+  max-width:760px; margin:0 auto;
+}
+
+header{
+  margin-bottom:28px;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:16px;
+}
+header .eyebrow{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--trail); font-weight:600;
+}
+h1{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:30px; font-weight:700; margin:6px 0 8px;
+  letter-spacing:-.01em;
+}
+header p{
+  color:var(--ink-soft); font-size:13.5px; line-height:1.5; margin:0; max-width:56ch;
+}
+
+.step{
+  background:var(--paper-2);
+  border:1px solid var(--line);
+  border-radius:2px;
+  padding:20px 22px;
+  margin-bottom:18px;
+  position:relative;
+}
+.step.disabled{opacity:.45; pointer-events:none;}
+.step-num{
+  font-family:'Space Grotesk',sans-serif;
+  position:absolute; top:-13px; left:18px;
+  background:var(--ink); color:var(--paper);
+  font-size:12px; font-weight:700;
+  padding:2px 9px; border-radius:2px; letter-spacing:.05em;
+}
+.step h2{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:15px; margin:4px 0 12px; font-weight:600;
+}
+
+.dropzone{
+  border:1.5px dashed var(--ink-soft);
+  border-radius:2px;
+  padding:22px;
+  text-align:center;
+  cursor:pointer;
+  transition:border-color .15s, background .15s;
+  font-size:13px;
+  color:var(--ink-soft);
+}
+.dropzone:hover, .dropzone.drag{
+  border-color:var(--trail); background:rgba(184,90,42,0.06); color:var(--ink);
+}
+.dropzone input{display:none;}
+.dropzone .fname{
+  color:var(--forest); font-weight:600; margin-top:4px;
+}
+
+.row{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+label.field-label{font-size:12px; color:var(--ink-soft);}
+input[type=number]{
+  font-family:'IBM Plex Mono',monospace;
+  width:90px; padding:7px 9px; border:1px solid var(--line);
+  background:var(--paper); color:var(--ink); border-radius:2px; font-size:13px;
+}
+.estimate{font-size:12px; color:var(--ink-soft); margin-top:10px;}
+.estimate b{color:var(--ink);}
+
+button{
+  font-family:'Space Grotesk',sans-serif;
+  background:var(--trail); color:var(--paper);
+  border:none; padding:11px 20px; font-size:13.5px; font-weight:600;
+  border-radius:2px; cursor:pointer; letter-spacing:.01em;
+  transition:background .15s;
+}
+button:hover:not(:disabled){background:var(--trail-dark);}
+button:disabled{background:#B9B29A; cursor:not-allowed; color:#7A7563;}
+button.secondary{background:var(--forest);}
+button.secondary:hover:not(:disabled){background:#2C4630;}
+
+.progress-wrap{margin-top:16px;}
+.bar-track{
+  height:6px; background:var(--line); border-radius:3px; overflow:hidden;
+}
+.bar-fill{
+  height:100%; width:0%; background:var(--trail); transition:width .2s;
+}
+.progress-text{font-size:12px; color:var(--ink-soft); margin-top:8px; display:flex; justify-content:space-between;}
+.log{
+  margin-top:10px; font-size:11.5px; color:var(--ink-soft);
+  max-height:70px; overflow-y:auto; line-height:1.6;
+  border-top:1px solid var(--line); padding-top:8px;
+}
+
+table{width:100%; border-collapse:collapse; margin-top:6px; font-size:12.5px;}
+th,td{text-align:left; padding:8px 6px; border-bottom:1px solid var(--line);}
+th{font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); font-weight:600;}
+td.km{color:var(--trail); font-weight:600; white-space:nowrap;}
+.empty-note{font-size:12.5px; color:var(--ink-soft); font-style:italic;}
+
+.result-actions{margin-top:16px; display:flex; gap:10px; align-items:center;}
+.badge{
+  display:inline-block; font-size:11px; padding:3px 8px; border-radius:20px;
+  background:var(--forest); color:var(--paper); font-weight:600;
+}
+.error-box{
+  background:rgba(162,62,46,0.08); border:1px solid var(--err); color:var(--err);
+  padding:10px 12px; border-radius:2px; font-size:12.5px; margin-top:10px;
+}
+footer{
+  margin-top:30px; font-size:11px; color:var(--ink-soft); line-height:1.6;
+  border-top:1px solid var(--line); padding-top:14px;
+}
+</style>
+</head>
+<body>
+
+<svg class="contours" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+  <g fill="none" stroke="#D3CBB2" stroke-width="1">
+    <path d="M-50,120 C 200,60 400,180 650,90 S 1050,140 1200,80"/>
+    <path d="M-50,220 C 220,150 420,260 680,180 S 1050,230 1200,170"/>
+    <path d="M-50,750 C 250,820 450,700 700,800 S 1000,730 1200,790"/>
+    <path d="M-50,850 C 230,900 470,810 720,880 S 1020,830 1200,870"/>
+  </g>
+</svg>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Outil GPX &middot; 100% navigateur</div>
+    <h1>Pancartes d'entrée de commune</h1>
+    <p>Détecte automatiquement chaque franchissement de limite communale le long d'un tracé GPX, et génère un nouveau fichier avec un waypoint "Entrée [Commune]" à chaque frontière. Aucune installation : tout tourne dans cette page, via l'API OpenStreetMap.</p>
+  </header>
+
+  <div class="step" id="step1">
+    <span class="step-num">1</span>
+    <h2>Charger le tracé</h2>
+    <label class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" accept=".gpx">
+      <div id="dzText">Clique ou dépose un fichier .gpx ici</div>
+    </label>
+  </div>
+
+  <div class="step disabled" id="step2">
+    <span class="step-num">2</span>
+    <h2>Paramètres</h2>
+    <div class="row">
+      <div>
+        <label class="field-label">Pas d'échantillonnage (m)</label><br>
+        <input type="number" id="stepInput" value="400" min="100" max="2000" step="50">
+      </div>
+      <div>
+        <label class="field-label">Alerte avant pancarte (m)</label><br>
+        <input type="number" id="alertInput" value="500" min="0" max="5000" step="50">
+      </div>
+      <button id="launchBtn">Lancer l'analyse</button>
+    </div>
+    <div class="estimate" id="estimate"></div>
+    <div class="estimate" style="margin-top:4px;">Mets 0 pour désactiver l'alerte de pré-signalisation.</div>
+  </div>
+
+  <div class="step disabled" id="step3">
+    <span class="step-num">3</span>
+    <h2>Progression</h2>
+    <div class="progress-wrap">
+      <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+      <div class="progress-text"><span id="progressLabel">En attente…</span><span id="progressPct">0%</span></div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <div class="step disabled" id="step4">
+    <span class="step-num">4</span>
+    <h2>Résultat <span class="badge" id="countBadge" style="display:none;"></span></h2>
+    <div id="resultsArea"><div class="empty-note">Les entrées de commune détectées apparaîtront ici.</div></div>
+    <div class="result-actions" id="downloadArea" style="display:none;">
+      <button class="secondary" id="downloadBtn">Télécharger le GPX enrichi</button>
+    </div>
+  </div>
+
+  <footer>
+    Géocodage inverse via l'API publique Nominatim (OpenStreetMap), utilisée dans les limites de son usage raisonnable (~1 requête/s). Pour un tracé de plusieurs dizaines de km, l'analyse peut prendre quelques minutes — laisse l'onglet ouvert.
+  </footer>
+</div>
+
+<script>
+let trkpts = [], cum = [], trackName = "Track", srcFileName = "track";
+
+const fileInput = document.getElementById('fileInput');
+const dropzone = document.getElementById('dropzone');
+const dzText = document.getElementById('dzText');
+const step2 = document.getElementById('step2');
+const step3 = document.getElementById('step3');
+const step4 = document.getElementById('step4');
+const stepInput = document.getElementById('stepInput');
+const alertInput = document.getElementById('alertInput');
+const estimate = document.getElementById('estimate');
+const launchBtn = document.getElementById('launchBtn');
+const barFill = document.getElementById('barFill');
+const progressLabel = document.getElementById('progressLabel');
+const progressPct = document.getElementById('progressPct');
+const logEl = document.getElementById('log');
+const resultsArea = document.getElementById('resultsArea');
+const downloadArea = document.getElementById('downloadArea');
+const downloadBtn = document.getElementById('downloadBtn');
+const countBadge = document.getElementById('countBadge');
+
+['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e=>{e.preventDefault(); dropzone.classList.add('drag');}));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e=>{e.preventDefault(); dropzone.classList.remove('drag');}));
+dropzone.addEventListener('drop', e=>{
+  if(e.dataTransfer.files.length){ handleFile(e.dataTransfer.files[0]); }
+});
+fileInput.addEventListener('change', e=>{
+  if(e.target.files.length){ handleFile(e.target.files[0]); }
+});
+
+function handleFile(file){
+  srcFileName = file.name.replace(/\.gpx$/i,'');
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try{
+      parseGPX(ev.target.result);
+      dzText.innerHTML = `Fichier chargé : <span class="fname">${escapeHtml(file.name)}</span> — ${trkpts.length} points`;
+      step2.classList.remove('disabled');
+      updateEstimate();
+    }catch(err){
+      dzText.textContent = "Erreur de lecture : " + err.message;
+    }
+  };
+  reader.readAsText(file);
+}
+
+function parseGPX(text){
+  const doc = new DOMParser().parseFromString(text, "text/xml");
+  const perr = doc.getElementsByTagName('parsererror');
+  if(perr.length) throw new Error("fichier GPX invalide");
+  const pts = Array.from(doc.getElementsByTagName('trkpt'));
+  if(!pts.length) throw new Error("aucun point de tracé (trkpt) trouvé");
+  trkpts = pts.map(pt => {
+    const eleEl = pt.getElementsByTagName('ele')[0];
+    return {
+      lat: parseFloat(pt.getAttribute('lat')),
+      lon: parseFloat(pt.getAttribute('lon')),
+      ele: eleEl ? eleEl.textContent : null
+    };
+  });
+  const nameEl = doc.getElementsByTagName('n')[0] || doc.getElementsByTagName('name')[0];
+  trackName = nameEl ? nameEl.textContent : srcFileName;
+  cum = [0];
+  for(let i=1;i<trkpts.length;i++){
+    cum.push(cum[i-1] + haversine(trkpts[i-1], trkpts[i]));
+  }
+}
+
+function haversine(a,b){
+  const R = 6371000;
+  const toRad = x => x*Math.PI/180;
+  const dLat = toRad(b.lat-a.lat), dLon = toRad(b.lon-a.lon);
+  const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(s), Math.sqrt(1-s));
+}
+
+function pointAtDistance(target){
+  const total = cum[cum.length-1];
+  if(target<=0) return trkpts[0];
+  if(target>=total) return trkpts[trkpts.length-1];
+  let lo=0, hi=cum.length-1;
+  while(lo<hi){
+    const mid=(lo+hi)>>1;
+    if(cum[mid]<target) lo=mid+1; else hi=mid;
+  }
+  const i=lo, i0=i-1;
+  const segLen = cum[i]-cum[i0];
+  const t = segLen===0 ? 0 : (target-cum[i0])/segLen;
+  return {
+    lat: trkpts[i0].lat + t*(trkpts[i].lat-trkpts[i0].lat),
+    lon: trkpts[i0].lon + t*(trkpts[i].lon-trkpts[i0].lon)
+  };
+}
+
+function updateEstimate(){
+  const step = parseFloat(stepInput.value)||400;
+  const total = cum[cum.length-1];
+  const nSamples = Math.ceil(total/step)+1;
+  const seconds = nSamples*1.1;
+  estimate.innerHTML = `Distance totale : <b>${(total/1000).toFixed(1)} km</b> — ~<b>${nSamples}</b> requêtes de base, estimation <b>~${Math.ceil(seconds/60)} min</b> (+ affinage aux frontières détectées).`;
+}
+stepInput.addEventListener('input', updateEstimate);
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+async function reverseGeocode(lat, lon){
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
+  const resp = await fetch(url, {headers:{'Accept-Language':'fr'}});
+  if(!resp.ok) throw new Error('Nominatim HTTP '+resp.status);
+  const data = await resp.json();
+  const a = data.address || {};
+  return a.city || a.town || a.village || a.municipality || a.hamlet || a.county || null;
+}
+
+function logMsg(msg){
+  const line = document.createElement('div');
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function escapeHtml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escapeXml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let foundWaypoints = [];
+let alertWaypoints = [];
+let finalGpxText = "";
+
+launchBtn.addEventListener('click', runAnalysis);
+
+async function runAnalysis(){
+  launchBtn.disabled = true;
+  step3.classList.remove('disabled');
+  step4.classList.remove('disabled');
+  logEl.innerHTML = "";
+  resultsArea.innerHTML = '<div class="empty-note">Analyse en cours…</div>';
+  downloadArea.style.display = "none";
+  countBadge.style.display = "none";
+  foundWaypoints = [];
+
+  const step = parseFloat(stepInput.value)||400;
+  const total = cum[cum.length-1];
+  const samples = [];
+  for(let d=0; d<total; d+=step) samples.push(d);
+  samples.push(total);
+
+  const coarse = [];
+  let errorCount = 0;
+
+  for(let i=0;i<samples.length;i++){
+    const d = samples[i];
+    const pt = pointAtDistance(d);
+    let commune = null;
+    try{
+      commune = await reverseGeocode(pt.lat, pt.lon);
+    }catch(e){
+      errorCount++;
+      logMsg(`⚠ erreur réseau à ${(d/1000).toFixed(1)} km : ${e.message}`);
+    }
+    coarse.push({dist:d, lat:pt.lat, lon:pt.lon, commune});
+    const pct = Math.round(((i+1)/samples.length)*70);
+    barFill.style.width = pct+"%";
+    progressPct.textContent = pct+"%";
+    progressLabel.textContent = `Échantillonnage — ${(d/1000).toFixed(1)} / ${(total/1000).toFixed(1)} km`;
+    if(commune) logMsg(`${(d/1000).toFixed(2)} km — ${commune}`);
+    await sleep(1100);
+  }
+
+  // detect transitions and refine
+  progressLabel.textContent = "Affinage des frontières…";
+  const transitions = [];
+  for(let i=1;i<coarse.length;i++){
+    if(coarse[i].commune && coarse[i-1].commune && coarse[i].commune !== coarse[i-1].commune){
+      transitions.push(i);
+    }
+  }
+
+  for(let t=0; t<transitions.length; t++){
+    const idx = transitions[t];
+    let lo = coarse[idx-1].dist, hi = coarse[idx].dist;
+    const hiName = coarse[idx].commune;
+    const loName = coarse[idx-1].commune;
+    for(let iter=0; iter<6; iter++){
+      const mid = (lo+hi)/2;
+      const pt = pointAtDistance(mid);
+      let name = null;
+      try{ name = await reverseGeocode(pt.lat, pt.lon); }catch(e){ /* keep last bounds */ }
+      await sleep(1100);
+      if(name === hiName){ hi = mid; } else { lo = mid; }
+    }
+    const crossPt = pointAtDistance(hi);
+    foundWaypoints.push({dist:hi, lat:crossPt.lat, lon:crossPt.lon, name:`Entrée ${hiName}`, from:loName, to:hiName});
+    const pct = 70 + Math.round(((t+1)/Math.max(transitions.length,1))*30);
+    barFill.style.width = pct+"%";
+    progressPct.textContent = pct+"%";
+    progressLabel.textContent = `Affinage — frontière ${t+1}/${transitions.length}`;
+    logMsg(`→ frontière trouvée à ${(hi/1000).toFixed(2)} km : ${loName} → ${hiName}`);
+  }
+
+  // pre-alert waypoints, placed `alertDist` meters before each detected border
+  alertWaypoints = [];
+  const alertDist = parseFloat(alertInput.value) || 0;
+  if(alertDist > 0){
+    foundWaypoints.forEach(w=>{
+      const d = Math.max(0, w.dist - alertDist);
+      const pt = pointAtDistance(d);
+      alertWaypoints.push({
+        dist:d, lat:pt.lat, lon:pt.lon,
+        name:`⚠ ${alertDist}m avant : ${w.to}`,
+        to:w.to, isAlert:true
+      });
+    });
+  }
+
+  barFill.style.width = "100%";
+  progressPct.textContent = "100%";
+  progressLabel.textContent = errorCount ? `Terminé (${errorCount} erreurs réseau)` : "Terminé";
+
+  renderResults();
+  launchBtn.disabled = false;
+}
+
+function renderResults(){
+  if(!foundWaypoints.length){
+    resultsArea.innerHTML = '<div class="empty-note">Aucun changement de commune détecté sur ce tracé.</div>';
+    return;
+  }
+  const totalPoints = foundWaypoints.length + alertWaypoints.length;
+  countBadge.style.display = "inline-block";
+  countBadge.textContent = foundWaypoints.length + " pancarte" + (foundWaypoints.length>1?"s":"") +
+    (alertWaypoints.length ? ` + ${alertWaypoints.length} alerte${alertWaypoints.length>1?"s":""}` : "");
+
+  const merged = [...foundWaypoints.map(w=>({...w,isAlert:false})), ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
+  let html = '<table><thead><tr><th>Km</th><th>Type</th><th>Commune</th><th>Lat</th><th>Lon</th></tr></thead><tbody>';
+  merged.forEach(w=>{
+    const type = w.isAlert ? '⚠ alerte' : '🚩 pancarte';
+    html += `<tr><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.to)}</td><td>${w.lat.toFixed(5)}</td><td>${w.lon.toFixed(5)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  resultsArea.innerHTML = html;
+
+  finalGpxText = buildGPX();
+  downloadArea.style.display = "flex";
+}
+
+function buildGPX(){
+  const allWpts = [
+    ...foundWaypoints.map(w=>({...w, sym:'City'})),
+    ...alertWaypoints.map(w=>({...w, sym:'Waypoint-caution'}))
+  ].sort((a,b)=>a.dist-b.dist);
+  const wptXml = allWpts.map(w =>
+    `  <wpt lat="${w.lat.toFixed(6)}" lon="${w.lon.toFixed(6)}">\n    <name>${escapeXml(w.name)}</name>\n    <sym>${w.sym}</sym>\n  </wpt>`
+  ).join('\n');
+  const trkptXml = trkpts.map(p =>
+    `      <trkpt lat="${p.lat}" lon="${p.lon}">${p.ele!==null ? `<ele>${p.ele}</ele>` : ''}</trkpt>`
+  ).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="Pancartes GPX Tool" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${escapeXml(trackName)}</name>
+  </metadata>
+${wptXml}
+  <trk>
+    <name>${escapeXml(trackName)}</name>
+    <trkseg>
+${trkptXml}
+    </trkseg>
+  </trk>
+</gpx>`;
+}
+
+downloadBtn.addEventListener('click', ()=>{
+  const blob = new Blob([finalGpxText], {type:'application/gpx+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = srcFileName + "_pancartes.gpx";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
