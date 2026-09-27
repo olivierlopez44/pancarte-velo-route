@@ -380,9 +380,22 @@ function showTrackOnMap(){
   $('map').style.display = 'block';
   if(!map){
     map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom:18, attribution:'&copy; contributeurs OpenStreetMap'
-    }).addTo(map);
+    const osmAttr = '&copy; <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>';
+    const layers = {
+      'OSM France': L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+        maxZoom:19, attribution:`${osmAttr}, fond <a href="https://www.openstreetmap.fr">OSM France</a>`}),
+      'Vélo (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+        maxZoom:19, attribution:`${osmAttr}, style <a href="https://www.cyclosm.org">CyclOSM</a>`}),
+      'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom:19, attribution:osmAttr}),
+    };
+    // Les serveurs de tuiles OSM refusent les pages ouvertes en local (file://, sans en-tête Referer)
+    const local = location.protocol === 'file:';
+    let base = local ? 'OSM France' : 'OpenStreetMap';
+    try{ const saved = localStorage.getItem('pancartes-fond'); if(layers[saved] && !(local && saved==='OpenStreetMap')) base = saved; }catch(e){}
+    layers[base].addTo(map);
+    L.control.layers(layers, null, {position:'topright'}).addTo(map);
+    map.on('baselayerchange', e => { try{ localStorage.setItem('pancartes-fond', e.name); }catch(err){} });
     markerLayer = L.layerGroup().addTo(map);
   }
   if(trackLayer) trackLayer.remove();

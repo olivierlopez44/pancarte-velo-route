@@ -19,7 +19,7 @@ La couverture OSM des panneaux varie selon les secteurs. Une pancarte manque ? [
 
 ## Utilisation
 
-1. Ouvrir `index.html` dans un navigateur, ou la version en ligne via GitHub Pages.
+1. Ouvrir la version en ligne (GitHub Pages), ou `index.html` directement dans un navigateur. En local (`file://`), la carte utilise le fond OSM France : les serveurs de tuiles d'openstreetmap.org refusent les pages locales. Le sélecteur en haut à droite de la carte permet de changer de fond, dont CyclOSM, orienté vélo.
 2. Charger un fichier `.gpx` (trace `trkpt` ou itinéraire `rtept`).
 3. Choisir la méthode, le style des noms et la distance d'alerte, puis lancer l'analyse.
 4. Vérifier les pancartes sur la carte, puis télécharger le GPX enrichi, le CSV ou imprimer le roadbook.
