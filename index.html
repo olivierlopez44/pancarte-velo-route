@@ -2,7 +2,10 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pancartes d'entrée de commune — GPX</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -18,6 +21,7 @@
   --line:#CBC2A6;
   --ok:#3E5C43;
   --err:#A23E2E;
+  --warn:#C9922E;
 }
 
 *{box-sizing:border-box;}
@@ -27,7 +31,7 @@ body{
   color:var(--ink);
   font-family:'IBM Plex Mono',monospace;
   min-height:100vh;
-  padding:32px 20px 60px;
+  padding:32px 16px 60px;
 }
 
 .contours{
@@ -80,6 +84,7 @@ header p{
 }
 
 .dropzone{
+  display:block;
   border:1.5px dashed var(--ink-soft);
   border-radius:2px;
   padding:22px;
@@ -97,7 +102,12 @@ header p{
   color:var(--forest); font-weight:600; margin-top:4px;
 }
 
-.row{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+#map{
+  height:320px; margin-top:14px; border:1px solid var(--line); border-radius:2px;
+  display:none;
+}
+
+.row{display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap;}
 label.field-label{font-size:12px; color:var(--ink-soft);}
 input[type=number]{
   font-family:'IBM Plex Mono',monospace;
@@ -118,6 +128,8 @@ button:hover:not(:disabled){background:var(--trail-dark);}
 button:disabled{background:#B9B29A; cursor:not-allowed; color:#7A7563;}
 button.secondary{background:var(--forest);}
 button.secondary:hover:not(:disabled){background:#2C4630;}
+button.ghost{background:transparent; color:var(--err); border:1px solid var(--err);}
+button.ghost:hover:not(:disabled){background:rgba(162,62,46,0.08);}
 
 .progress-wrap{margin-top:16px;}
 .bar-track{
@@ -126,16 +138,19 @@ button.secondary:hover:not(:disabled){background:#2C4630;}
 .bar-fill{
   height:100%; width:0%; background:var(--trail); transition:width .2s;
 }
-.progress-text{font-size:12px; color:var(--ink-soft); margin-top:8px; display:flex; justify-content:space-between;}
+.progress-text{font-size:12px; color:var(--ink-soft); margin-top:8px; display:flex; justify-content:space-between; gap:10px;}
 .log{
   margin-top:10px; font-size:11.5px; color:var(--ink-soft);
-  max-height:70px; overflow-y:auto; line-height:1.6;
+  max-height:90px; overflow-y:auto; line-height:1.6;
   border-top:1px solid var(--line); padding-top:8px;
 }
 
+.table-wrap{overflow-x:auto;}
 table{width:100%; border-collapse:collapse; margin-top:6px; font-size:12.5px;}
 th,td{text-align:left; padding:8px 6px; border-bottom:1px solid var(--line);}
 th{font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); font-weight:600;}
+tbody tr{cursor:pointer;}
+tbody tr:hover{background:rgba(184,90,42,0.06);}
 td.km{color:var(--trail); font-weight:600; white-space:nowrap;}
 .empty-note{font-size:12.5px; color:var(--ink-soft); font-style:italic;}
 
@@ -179,6 +194,7 @@ footer{
       <input type="file" id="fileInput" accept=".gpx">
       <div id="dzText">Clique ou dépose un fichier .gpx ici</div>
     </label>
+    <div id="map"></div>
   </div>
 
   <div class="step disabled" id="step2">
@@ -186,17 +202,18 @@ footer{
     <h2>Paramètres</h2>
     <div class="row">
       <div>
-        <label class="field-label">Pas d'échantillonnage (m)</label><br>
+        <label class="field-label" for="stepInput">Pas d'échantillonnage (m)</label><br>
         <input type="number" id="stepInput" value="400" min="100" max="2000" step="50">
       </div>
       <div>
-        <label class="field-label">Alerte avant pancarte (m)</label><br>
+        <label class="field-label" for="alertInput">Alerte avant pancarte (m)</label><br>
         <input type="number" id="alertInput" value="500" min="0" max="5000" step="50">
       </div>
       <button id="launchBtn">Lancer l'analyse</button>
+      <button class="ghost" id="stopBtn" style="display:none;">Arrêter</button>
     </div>
     <div class="estimate" id="estimate"></div>
-    <div class="estimate" style="margin-top:4px;">Mets 0 pour désactiver l'alerte de pré-signalisation.</div>
+    <div class="estimate" style="margin-top:4px;">Un pas plus petit détecte mieux les passages courts dans une commune, mais allonge l'analyse. Mets 0 en alerte pour la désactiver (modifiable après l'analyse, sans la relancer).</div>
   </div>
 
   <div class="step disabled" id="step3">
@@ -220,31 +237,57 @@ footer{
 
   <footer>
     Géocodage inverse via l'API publique Nominatim (OpenStreetMap), utilisée dans les limites de son usage raisonnable (~1 requête/s). Pour un tracé de plusieurs dizaines de km, l'analyse peut prendre quelques minutes — laisse l'onglet ouvert.
+    Le fichier exporté conserve l'intégralité du GPX d'origine (horodatages, waypoints existants, extensions) ; seuls les waypoints de pancarte et d'alerte sont ajoutés.
   </footer>
 </div>
 
 <script>
-let trkpts = [], cum = [], trackName = "Track", srcFileName = "track";
+const REQ_INTERVAL = 1100;     // ms minimum entre deux requêtes Nominatim
+const PRECISION = 10;          // m : précision de positionnement d'une frontière
+const MIN_STEP = 100;
 
-const fileInput = document.getElementById('fileInput');
-const dropzone = document.getElementById('dropzone');
-const dzText = document.getElementById('dzText');
-const step2 = document.getElementById('step2');
-const step3 = document.getElementById('step3');
-const step4 = document.getElementById('step4');
-const stepInput = document.getElementById('stepInput');
-const alertInput = document.getElementById('alertInput');
-const estimate = document.getElementById('estimate');
-const launchBtn = document.getElementById('launchBtn');
-const barFill = document.getElementById('barFill');
-const progressLabel = document.getElementById('progressLabel');
-const progressPct = document.getElementById('progressPct');
-const logEl = document.getElementById('log');
-const resultsArea = document.getElementById('resultsArea');
-const downloadArea = document.getElementById('downloadArea');
-const downloadBtn = document.getElementById('downloadBtn');
-const countBadge = document.getElementById('countBadge');
+let srcDoc = null, trkpts = [], cum = [], trackName = "Track", srcFileName = "track";
+let foundWaypoints = [], alertWaypoints = [], finalGpxText = "";
+let running = false, stopRequested = false;
+const geoCache = new Map();
 
+const $ = id => document.getElementById(id);
+const fileInput = $('fileInput'), dropzone = $('dropzone'), dzText = $('dzText');
+const step1 = $('step1'), step2 = $('step2'), step3 = $('step3'), step4 = $('step4');
+const stepInput = $('stepInput'), alertInput = $('alertInput'), estimate = $('estimate');
+const launchBtn = $('launchBtn'), stopBtn = $('stopBtn');
+const barFill = $('barFill'), progressLabel = $('progressLabel'), progressPct = $('progressPct'), logEl = $('log');
+const resultsArea = $('resultsArea'), downloadArea = $('downloadArea'), downloadBtn = $('downloadBtn'), countBadge = $('countBadge');
+
+// ---------- Carte ----------
+let map = null, trackLayer = null, markerLayer = null;
+function showTrackOnMap(){
+  if(typeof L === 'undefined') return; // Leaflet indisponible (hors ligne) : on se passe de la carte
+  $('map').style.display = 'block';
+  if(!map){
+    map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:18, attribution:'&copy; contributeurs OpenStreetMap'
+    }).addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+  }
+  if(trackLayer) trackLayer.remove();
+  markerLayer.clearLayers();
+  trackLayer = L.polyline(trkpts.map(p=>[p.lat,p.lon]), {color:'#B85A2A', weight:4, opacity:.85}).addTo(map);
+  map.fitBounds(trackLayer.getBounds(), {padding:[16,16]});
+}
+function showMarkersOnMap(list){
+  if(!markerLayer) return;
+  markerLayer.clearLayers();
+  list.forEach(w=>{
+    w.marker = L.circleMarker([w.lat,w.lon], {
+      radius: w.isAlert ? 5 : 7,
+      color: w.isAlert ? '#C9922E' : '#3E5C43', fillOpacity:.9, weight:2
+    }).bindPopup(`<b>${escapeHtml(w.name)}</b><br>km ${(w.dist/1000).toFixed(2)}`).addTo(markerLayer);
+  });
+}
+
+// ---------- Chargement du fichier ----------
 ['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e=>{e.preventDefault(); dropzone.classList.add('drag');}));
 ['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e=>{e.preventDefault(); dropzone.classList.remove('drag');}));
 dropzone.addEventListener('drop', e=>{
@@ -262,35 +305,46 @@ function handleFile(file){
       parseGPX(ev.target.result);
       dzText.innerHTML = `Fichier chargé : <span class="fname">${escapeHtml(file.name)}</span> — ${trkpts.length} points`;
       step2.classList.remove('disabled');
+      resetResults();
       updateEstimate();
+      showTrackOnMap();
     }catch(err){
       dzText.textContent = "Erreur de lecture : " + err.message;
+      step2.classList.add('disabled');
     }
   };
   reader.readAsText(file);
 }
 
 function parseGPX(text){
-  const doc = new DOMParser().parseFromString(text, "text/xml");
-  const perr = doc.getElementsByTagName('parsererror');
-  if(perr.length) throw new Error("fichier GPX invalide");
-  const pts = Array.from(doc.getElementsByTagName('trkpt'));
-  if(!pts.length) throw new Error("aucun point de tracé (trkpt) trouvé");
-  trkpts = pts.map(pt => {
-    const eleEl = pt.getElementsByTagName('ele')[0];
-    return {
-      lat: parseFloat(pt.getAttribute('lat')),
-      lon: parseFloat(pt.getAttribute('lon')),
-      ele: eleEl ? eleEl.textContent : null
-    };
-  });
-  const nameEl = doc.getElementsByTagName('n')[0] || doc.getElementsByTagName('name')[0];
-  trackName = nameEl ? nameEl.textContent : srcFileName;
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if(doc.getElementsByTagName('parsererror').length) throw new Error("fichier GPX invalide");
+  // Tracé (trkpt) en priorité, sinon itinéraire (rtept)
+  let pts = Array.from(doc.getElementsByTagName('trkpt'));
+  if(!pts.length) pts = Array.from(doc.getElementsByTagName('rtept'));
+  if(!pts.length) throw new Error("aucun point de tracé (trkpt / rtept) trouvé");
+  const parsed = pts.map(pt => ({
+    lat: parseFloat(pt.getAttribute('lat')),
+    lon: parseFloat(pt.getAttribute('lon'))
+  })).filter(p => isFinite(p.lat) && isFinite(p.lon));
+  if(parsed.length < 2) throw new Error("pas assez de points valides");
+
+  const root = doc.documentElement;
+  const nameEl = childByTag(firstChildByTag(root,'trk') || firstChildByTag(root,'rte'), 'name')
+              || childByTag(firstChildByTag(root,'metadata'), 'name');
+  srcDoc = doc;
+  trkpts = parsed;
+  trackName = nameEl && nameEl.textContent.trim() ? nameEl.textContent.trim() : srcFileName;
   cum = [0];
   for(let i=1;i<trkpts.length;i++){
     cum.push(cum[i-1] + haversine(trkpts[i-1], trkpts[i]));
   }
 }
+function firstChildByTag(parent, tag){
+  if(!parent) return null;
+  return Array.from(parent.children).find(c => c.localName === tag) || null;
+}
+const childByTag = firstChildByTag;
 
 function haversine(a,b){
   const R = 6371000;
@@ -318,118 +372,203 @@ function pointAtDistance(target){
   };
 }
 
+function getStep(){
+  return Math.max(MIN_STEP, parseFloat(stepInput.value) || 400);
+}
+
 function updateEstimate(){
-  const step = parseFloat(stepInput.value)||400;
+  if(!cum.length) return;
   const total = cum[cum.length-1];
-  const nSamples = Math.ceil(total/step)+1;
-  const seconds = nSamples*1.1;
+  const nSamples = Math.ceil(total/getStep())+1;
+  const seconds = nSamples*REQ_INTERVAL/1000;
   estimate.innerHTML = `Distance totale : <b>${(total/1000).toFixed(1)} km</b> — ~<b>${nSamples}</b> requêtes de base, estimation <b>~${Math.ceil(seconds/60)} min</b> (+ affinage aux frontières détectées).`;
 }
 stepInput.addEventListener('input', updateEstimate);
 
+// ---------- Géocodage (Nominatim) ----------
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-async function reverseGeocode(lat, lon){
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
-  const resp = await fetch(url, {headers:{'Accept-Language':'fr'}});
-  if(!resp.ok) throw new Error('Nominatim HTTP '+resp.status);
-  const data = await resp.json();
-  const a = data.address || {};
-  return a.city || a.town || a.village || a.municipality || a.hamlet || a.county || null;
+class StopError extends Error {}
+let lastRequestAt = 0;
+
+async function throttledFetch(url){
+  const wait = lastRequestAt + REQ_INTERVAL - Date.now();
+  if(wait > 0) await sleep(wait);
+  if(stopRequested) throw new StopError();
+  lastRequestAt = Date.now();
+  return fetch(url, {headers:{'Accept-Language':'fr'}});
 }
 
+// Renvoie le nom de la commune, ou null si le point n'est dans aucune commune identifiable.
+// Lève une erreur si le service reste injoignable après plusieurs tentatives.
+async function reverseGeocode(lat, lon){
+  const key = lat.toFixed(5)+','+lon.toFixed(5);
+  if(geoCache.has(key)) return geoCache.get(key);
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
+  const backoff = [2000, 5000, 10000];
+  for(let attempt=0; ; attempt++){
+    try{
+      const resp = await throttledFetch(url);
+      if(resp.status === 429 || resp.status >= 500) throw new Error('Nominatim HTTP '+resp.status);
+      if(!resp.ok) throw new Error('Nominatim HTTP '+resp.status);
+      const data = await resp.json();
+      const a = data.address || {};
+      // Uniquement des niveaux "commune" : un lieu-dit ou un département créerait de fausses pancartes.
+      const name = a.city || a.town || a.village || a.municipality || null;
+      geoCache.set(key, name);
+      return name;
+    }catch(e){
+      if(e instanceof StopError || attempt >= backoff.length) throw e;
+      logMsg(`… nouvelle tentative dans ${backoff[attempt]/1000} s (${e.message})`);
+      await sleep(backoff[attempt]);
+    }
+  }
+}
+
+async function communeAt(dist){
+  const pt = pointAtDistance(dist);
+  try{
+    return await reverseGeocode(pt.lat, pt.lon);
+  }catch(e){
+    if(e instanceof StopError) throw e;
+    logMsg(`⚠ erreur réseau à ${(dist/1000).toFixed(2)} km : ${e.message}`);
+    return undefined; // inconnu (≠ null qui signifie "hors commune")
+  }
+}
+
+// ---------- Utilitaires ----------
 function logMsg(msg){
   const line = document.createElement('div');
   line.textContent = msg;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
 }
-
 function escapeHtml(s){
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-function escapeXml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function formatDuration(sec){
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec/60), s = sec%60;
+  return m ? `${m} min ${String(s).padStart(2,'0')} s` : `${s} s`;
+}
+function setProgress(pct, label){
+  barFill.style.width = pct+"%";
+  progressPct.textContent = pct+"%";
+  if(label) progressLabel.textContent = label;
+}
 
-let foundWaypoints = [];
-let alertWaypoints = [];
-let finalGpxText = "";
-
+// ---------- Analyse ----------
 launchBtn.addEventListener('click', runAnalysis);
+stopBtn.addEventListener('click', ()=>{
+  stopRequested = true;
+  stopBtn.disabled = true;
+  progressLabel.textContent = "Arrêt en cours…";
+});
+
+function resetResults(){
+  foundWaypoints = []; alertWaypoints = []; finalGpxText = "";
+  resultsArea.innerHTML = '<div class="empty-note">Les entrées de commune détectées apparaîtront ici.</div>';
+  downloadArea.style.display = "none";
+  countBadge.style.display = "none";
+  step4.classList.add('disabled');
+}
 
 async function runAnalysis(){
+  if(running) return;
+  running = true; stopRequested = false;
   launchBtn.disabled = true;
+  stopBtn.style.display = ''; stopBtn.disabled = false;
+  step1.classList.add('disabled');
   step3.classList.remove('disabled');
+  resetResults();
   step4.classList.remove('disabled');
   logEl.innerHTML = "";
   resultsArea.innerHTML = '<div class="empty-note">Analyse en cours…</div>';
-  downloadArea.style.display = "none";
-  countBadge.style.display = "none";
-  foundWaypoints = [];
+  setProgress(0, "Échantillonnage…");
 
-  const step = parseFloat(stepInput.value)||400;
+  try{
+    await analyse();
+    setProgress(100, "Terminé");
+  }catch(e){
+    if(!(e instanceof StopError)) throw e;
+    progressLabel.textContent = "Analyse interrompue — résultats partiels";
+    logMsg("■ analyse interrompue par l'utilisateur");
+  }finally{
+    running = false;
+    launchBtn.disabled = false;
+    stopBtn.style.display = 'none';
+    step1.classList.remove('disabled');
+    rebuildAlertsAndOutput();
+  }
+}
+
+async function analyse(){
+  const step = getStep();
   const total = cum[cum.length-1];
   const samples = [];
   for(let d=0; d<total; d+=step) samples.push(d);
   samples.push(total);
 
+  // 1) Échantillonnage grossier
   const coarse = [];
-  let errorCount = 0;
-
+  const t0 = Date.now();
   for(let i=0;i<samples.length;i++){
     const d = samples[i];
-    const pt = pointAtDistance(d);
-    let commune = null;
-    try{
-      commune = await reverseGeocode(pt.lat, pt.lon);
-    }catch(e){
-      errorCount++;
-      logMsg(`⚠ erreur réseau à ${(d/1000).toFixed(1)} km : ${e.message}`);
-    }
-    coarse.push({dist:d, lat:pt.lat, lon:pt.lon, commune});
+    const commune = await communeAt(d);
+    coarse.push({dist:d, commune});
     const pct = Math.round(((i+1)/samples.length)*70);
-    barFill.style.width = pct+"%";
-    progressPct.textContent = pct+"%";
-    progressLabel.textContent = `Échantillonnage — ${(d/1000).toFixed(1)} / ${(total/1000).toFixed(1)} km`;
+    const remaining = (Date.now()-t0)/(i+1) * (samples.length-i-1) / 1000;
+    setProgress(pct, `Échantillonnage — ${(d/1000).toFixed(1)} / ${(total/1000).toFixed(1)} km · reste ~${formatDuration(remaining)}`);
     if(commune) logMsg(`${(d/1000).toFixed(2)} km — ${commune}`);
-    await sleep(1100);
   }
 
-  // detect transitions and refine
-  progressLabel.textContent = "Affinage des frontières…";
+  // 2) Transitions entre échantillons connus (on saute ceux en erreur réseau)
+  const known = coarse.filter(c => c.commune);
   const transitions = [];
-  for(let i=1;i<coarse.length;i++){
-    if(coarse[i].commune && coarse[i-1].commune && coarse[i].commune !== coarse[i-1].commune){
-      transitions.push(i);
-    }
+  for(let i=1;i<known.length;i++){
+    if(known[i].commune !== known[i-1].commune) transitions.push([known[i-1], known[i]]);
   }
 
+  // 3) Affinage par dichotomie de chaque transition
   for(let t=0; t<transitions.length; t++){
-    const idx = transitions[t];
-    let lo = coarse[idx-1].dist, hi = coarse[idx].dist;
-    const hiName = coarse[idx].commune;
-    const loName = coarse[idx-1].commune;
-    for(let iter=0; iter<6; iter++){
-      const mid = (lo+hi)/2;
-      const pt = pointAtDistance(mid);
-      let name = null;
-      try{ name = await reverseGeocode(pt.lat, pt.lon); }catch(e){ /* keep last bounds */ }
-      await sleep(1100);
-      if(name === hiName){ hi = mid; } else { lo = mid; }
-    }
-    const crossPt = pointAtDistance(hi);
-    foundWaypoints.push({dist:hi, lat:crossPt.lat, lon:crossPt.lon, name:`Entrée ${hiName}`, from:loName, to:hiName});
-    const pct = 70 + Math.round(((t+1)/Math.max(transitions.length,1))*30);
-    barFill.style.width = pct+"%";
-    progressPct.textContent = pct+"%";
-    progressLabel.textContent = `Affinage — frontière ${t+1}/${transitions.length}`;
-    logMsg(`→ frontière trouvée à ${(hi/1000).toFixed(2)} km : ${loName} → ${hiName}`);
+    const [a, b] = transitions[t];
+    setProgress(70 + Math.round((t/transitions.length)*30), `Affinage — frontière ${t+1}/${transitions.length}`);
+    const crossings = [];
+    await refine(a.dist, a.commune, b.dist, b.commune, crossings);
+    crossings.forEach(c=>{
+      const pt = pointAtDistance(c.dist);
+      foundWaypoints.push({dist:c.dist, lat:pt.lat, lon:pt.lon, name:`Entrée ${c.to}`, from:c.from, to:c.to});
+      logMsg(`→ frontière à ${(c.dist/1000).toFixed(2)} km : ${c.from} → ${c.to}`);
+    });
   }
+}
 
-  // pre-alert waypoints, placed `alertDist` meters before each detected border
+// Recherche la position de la frontière entre loD (commune loName) et hiD (commune hiName).
+// Si un point intermédiaire tombe dans une 3e commune, les deux sous-intervalles sont affinés.
+async function refine(loD, loName, hiD, hiName, out){
+  if(hiD - loD <= PRECISION){
+    out.push({dist:hiD, from:loName, to:hiName});
+    return;
+  }
+  const mid = (loD+hiD)/2;
+  const name = await communeAt(mid);
+  if(name === hiName){
+    await refine(loD, loName, mid, hiName, out);
+  }else if(name === loName || !name){
+    await refine(mid, loName, hiD, hiName, out);
+  }else{
+    await refine(loD, loName, mid, name, out);
+    await refine(mid, name, hiD, hiName, out);
+  }
+}
+
+// ---------- Alertes & résultats ----------
+alertInput.addEventListener('input', ()=>{ if(!running && foundWaypoints.length) rebuildAlertsAndOutput(); });
+
+function rebuildAlertsAndOutput(){
+  // Waypoints d'alerte placés `alertDist` mètres avant chaque frontière détectée
   alertWaypoints = [];
-  const alertDist = parseFloat(alertInput.value) || 0;
+  const alertDist = Math.max(0, parseFloat(alertInput.value) || 0);
   if(alertDist > 0){
     foundWaypoints.forEach(w=>{
       const d = Math.max(0, w.dist - alertDist);
@@ -441,62 +580,79 @@ async function runAnalysis(){
       });
     });
   }
-
-  barFill.style.width = "100%";
-  progressPct.textContent = "100%";
-  progressLabel.textContent = errorCount ? `Terminé (${errorCount} erreurs réseau)` : "Terminé";
-
   renderResults();
-  launchBtn.disabled = false;
 }
 
 function renderResults(){
   if(!foundWaypoints.length){
     resultsArea.innerHTML = '<div class="empty-note">Aucun changement de commune détecté sur ce tracé.</div>';
+    countBadge.style.display = "none";
+    downloadArea.style.display = "none";
+    showMarkersOnMap([]);
     return;
   }
-  const totalPoints = foundWaypoints.length + alertWaypoints.length;
   countBadge.style.display = "inline-block";
   countBadge.textContent = foundWaypoints.length + " pancarte" + (foundWaypoints.length>1?"s":"") +
     (alertWaypoints.length ? ` + ${alertWaypoints.length} alerte${alertWaypoints.length>1?"s":""}` : "");
 
   const merged = [...foundWaypoints.map(w=>({...w,isAlert:false})), ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
-  let html = '<table><thead><tr><th>Km</th><th>Type</th><th>Commune</th><th>Lat</th><th>Lon</th></tr></thead><tbody>';
-  merged.forEach(w=>{
+  showMarkersOnMap(merged);
+
+  let html = '<div class="table-wrap"><table><thead><tr><th>Km</th><th>Type</th><th>Commune</th><th>Lat</th><th>Lon</th></tr></thead><tbody>';
+  merged.forEach((w,i)=>{
     const type = w.isAlert ? '⚠ alerte' : '🚩 pancarte';
-    html += `<tr><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.to)}</td><td>${w.lat.toFixed(5)}</td><td>${w.lon.toFixed(5)}</td></tr>`;
+    html += `<tr data-i="${i}"><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.to)}</td><td>${w.lat.toFixed(5)}</td><td>${w.lon.toFixed(5)}</td></tr>`;
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   resultsArea.innerHTML = html;
+  resultsArea.querySelectorAll('tbody tr').forEach(tr=>{
+    tr.addEventListener('click', ()=>{
+      const w = merged[+tr.dataset.i];
+      if(map && w.marker){
+        map.setView([w.lat, w.lon], 15);
+        w.marker.openPopup();
+        $('map').scrollIntoView({behavior:'smooth', block:'center'});
+      }
+    });
+  });
 
   finalGpxText = buildGPX();
   downloadArea.style.display = "flex";
 }
 
+// Ajoute les waypoints au GPX d'origine (tout le reste est conservé tel quel).
 function buildGPX(){
+  const doc = srcDoc.cloneNode(true);
+  const root = doc.documentElement;
+  const ns = root.namespaceURI || 'http://www.topografix.com/GPX/1/1';
+  // Ordre imposé par le schéma GPX : metadata, wpt, rte, trk, extensions
+  const anchor = Array.from(root.children).find(c => ['rte','trk','extensions'].includes(c.localName)) || null;
+
   const allWpts = [
-    ...foundWaypoints.map(w=>({...w, sym:'City'})),
-    ...alertWaypoints.map(w=>({...w, sym:'Waypoint-caution'}))
+    ...foundWaypoints.map(w=>({...w, sym:'City', type:'Pancarte'})),
+    ...alertWaypoints.map(w=>({...w, sym:'Waypoint-caution', type:'Alerte pancarte'}))
   ].sort((a,b)=>a.dist-b.dist);
-  const wptXml = allWpts.map(w =>
-    `  <wpt lat="${w.lat.toFixed(6)}" lon="${w.lon.toFixed(6)}">\n    <name>${escapeXml(w.name)}</name>\n    <sym>${w.sym}</sym>\n  </wpt>`
-  ).join('\n');
-  const trkptXml = trkpts.map(p =>
-    `      <trkpt lat="${p.lat}" lon="${p.lon}">${p.ele!==null ? `<ele>${p.ele}</ele>` : ''}</trkpt>`
-  ).join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx creator="Pancartes GPX Tool" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata>
-    <name>${escapeXml(trackName)}</name>
-  </metadata>
-${wptXml}
-  <trk>
-    <name>${escapeXml(trackName)}</name>
-    <trkseg>
-${trkptXml}
-    </trkseg>
-  </trk>
-</gpx>`;
+
+  const el = (tag, text) => { const e = doc.createElementNS(ns, tag); if(text!=null) e.textContent = text; return e; };
+  allWpts.forEach(w=>{
+    const wpt = el('wpt');
+    wpt.setAttribute('lat', w.lat.toFixed(6));
+    wpt.setAttribute('lon', w.lon.toFixed(6));
+    wpt.appendChild(doc.createTextNode('\n    '));
+    wpt.appendChild(el('name', w.name));
+    wpt.appendChild(doc.createTextNode('\n    '));
+    wpt.appendChild(el('sym', w.sym));
+    wpt.appendChild(doc.createTextNode('\n    '));
+    wpt.appendChild(el('type', w.type));
+    wpt.appendChild(doc.createTextNode('\n  '));
+    root.insertBefore(doc.createTextNode('\n  '), anchor);
+    root.insertBefore(wpt, anchor);
+  });
+  if(anchor) root.insertBefore(doc.createTextNode('\n  '), anchor);
+
+  let xml = new XMLSerializer().serializeToString(doc);
+  if(!xml.startsWith('<?xml')) xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml;
+  return xml;
 }
 
 downloadBtn.addEventListener('click', ()=>{
@@ -506,7 +662,7 @@ downloadBtn.addEventListener('click', ()=>{
   a.href = url;
   a.download = srcFileName + "_pancartes.gpx";
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
 });
 </script>
 </body>
