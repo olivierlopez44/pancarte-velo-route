@@ -3,7 +3,7 @@
   "private": true,
   "description": "Pancartes d'entrée de commune sur un tracé GPX vélo",
   "scripts": {
-    "test": "node --test test/core.test.js",
+    "test": "node --test test/core.test.js test/signs.test.js",
     "test:integration": "node test/integration.js",
     "test:e2e": "node test/e2e.js"
   }

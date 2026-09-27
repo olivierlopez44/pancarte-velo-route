@@ -81,33 +81,31 @@ async function cdp(wsUrl){
     for(let i=0;i<100 && !(await evaluate('document.readyState==="complete" && !!window.PancarteCore').catch(()=>false)); i++) await sleep(100);
     await evaluate(`localStorage.clear()`);
 
-    // Chargement du fichier
+    // Charge un GPX et lance l'analyse rapide ; renvoie les waypoints produits
     const {root} = await send('DOM.getDocument');
     const {nodeId} = await send('DOM.querySelector', {nodeId:root.nodeId, selector:'#fileInput'});
-    await send('DOM.setFileInputFiles', {nodeId, files:[FIXTURE]});
-    for(let i=0;i<50 && !(await evaluate('trkpts.length>0')); i++) await sleep(100);
-    console.log('Chargé :', await evaluate('dzText.textContent'));
-    console.log(await evaluate('estimate.textContent'));
-
-    // Analyse rapide
-    const t0 = Date.now();
-    await evaluate(`document.getElementById('launchBtn').click()`);
-    for(let i=0;i<1800 && (await evaluate('running')); i++) await sleep(100);
-    console.log(`Analyse : ${Date.now()-t0} ms — ${await evaluate('progressLabel.textContent')}`);
-    console.log('Journal :\n  ' + (await evaluate(`[...logEl.children].map(e=>e.textContent).join('\\n  ')`)));
-    const signs = await evaluate(`foundWaypoints.map(w=>w.name)`);
-    const alerts = await evaluate(`alertWaypoints.map(w=>w.name)`);
-    console.log('Pancartes :', signs, '\nAlertes :', alerts);
-    assert(signs.includes('Entrée Saint-Herblain') && signs.includes('Entrée Couëron'), 'pancartes attendues absentes');
-    assert(alerts.length === signs.length, 'une alerte par pancarte attendue');
-    if(SHOTS){
-      await sleep(600); // fin des transitions CSS
-      fs.mkdirSync(SHOTS, {recursive:true});
-      const {data} = await send('Page.captureScreenshot', {captureBeyondViewport:true});
-      fs.writeFileSync(path.join(SHOTS, 'resultat.png'), Buffer.from(data, 'base64'));
+    async function loadAndRun(file){
+      await evaluate(`trkpts = []`);
+      await send('DOM.setFileInputFiles', {nodeId, files:[file]});
+      for(let i=0;i<50 && !(await evaluate('trkpts.length>0')); i++) await sleep(100);
+      console.log('\n=== ' + (await evaluate('dzText.textContent')));
+      const t0 = Date.now();
+      await evaluate(`document.getElementById('launchBtn').click()`);
+      await sleep(200);
+      for(let i=0;i<1800 && (await evaluate('running')); i++) await sleep(100);
+      console.log(`Analyse : ${Date.now()-t0} ms — ${await evaluate('progressLabel.textContent')}`);
+      console.log('Journal :\n  ' + (await evaluate(`[...logEl.children].map(e=>e.textContent).join('\\n  ')`)));
+      const w = await evaluate(`waypoints.map(w => ({kind:w.kind, label:w.label, name:w.name, km:+(w.dist/1000).toFixed(2), certain:w.certain}))`);
+      w.forEach(x => console.log(`  km ${x.km.toFixed(2).padStart(6)}  ${x.kind.padEnd(5)}  ${x.name}${x.certain===false ? '  (?)' : ''}`));
+      return w;
     }
 
-    // GPX produit : valide, contenu d'origine conservé, waypoints avant <trk>
+    // --- 1. Nantes → Couëron : conservation du GPX d'origine, noms compacts, CSV ---
+    let w = await loadAndRun(FIXTURE);
+    const main = w.filter(x => x.kind!=='alert'), alerts = w.filter(x => x.kind==='alert');
+    assert(main.some(x => x.label==='Saint-Herblain') && main.some(x => x.label==='Couëron'), 'Saint-Herblain / Couëron attendus');
+    assert(alerts.length === main.length, 'une alerte par pancarte attendue');
+
     const check = await evaluate(`(() => {
       const d = new DOMParser().parseFromString(finalGpxText, 'application/xml');
       const r = d.documentElement, kids = [...r.children].map(c=>c.localName);
@@ -119,7 +117,7 @@ async function cdp(wsUrl){
         trkpts: d.getElementsByTagName('trkpt').length,
         origWpt: [...d.getElementsByTagName('wpt')].some(w => w.getElementsByTagName('name')[0]?.textContent === 'Départ'),
         ext: d.getElementsByTagName('extensions').length,
-        wpts: [...d.getElementsByTagName('wpt')].map(w => w.getElementsByTagName('name')[0].textContent + ' | ' + (w.getElementsByTagName('desc')[0]?.textContent||'')),
+        wpts: [...d.getElementsByTagName('wpt')].map(w => ['name','sym','desc'].map(t => w.getElementsByTagName(t)[0]?.textContent||'').join(' | ')),
       };
     })()`);
     console.log('GPX :', JSON.stringify(check, null, 2));
@@ -135,16 +133,33 @@ async function cdp(wsUrl){
     // Style compact + alerte modifiée sans relancer l'analyse
     await evaluate(`styleSelect.value='compact'; styleSelect.dispatchEvent(new Event('change'));
                     alertInput.value='1000'; alertInput.dispatchEvent(new Event('input'));`);
-    const compact = await evaluate(`[...foundWaypoints, ...alertWaypoints].map(w=>w.name)`);
+    const compact = await evaluate(`waypoints.map(w=>w.name)`);
     console.log('Compact :', compact);
-    assert(compact.includes('St-Herblain') && compact.includes('1km Coueron'), 'noms compacts inattendus');
+    assert(compact.some(n => /^(~)?St-Herblain$/.test(n)) && compact.includes('1km Coueron'), 'noms compacts inattendus');
     assert(compact.every(n => n.length <= 15 && /^[\x20-\x7E]+$/.test(n)), 'nom compact trop long ou non ASCII');
     assert(/<name>1km Coueron<\/name>/.test(await evaluate('finalGpxText')), 'GPX non régénéré');
+    const csv = await evaluate(`Core.toCSV(waypoints)`);
+    console.log('CSV :\n' + csv.slice(1));
+    await evaluate(`styleSelect.value='full'; styleSelect.dispatchEvent(new Event('change'));
+                    alertInput.value='500'; alertInput.dispatchEvent(new Event('input'));`);
+
+    // --- 2. Sud-Loire : vraies pancartes OSM ---
+    w = await loadAndRun(path.join(__dirname, 'fixtures', 'sud-loire.gpx'));
+    const signLabels = w.filter(x => x.kind==='sign').map(x => x.label);
+    for(const l of ['Bouaye', 'Saint-Aignan-de-Grand-Lieu', 'Pont-Saint-Martin', 'Les Sorinières']){
+      assert(signLabels.includes(l), `pancarte ${l} attendue`);
+    }
+    if(SHOTS){
+      await sleep(1500); // tuiles de la carte + fin des transitions CSS
+      fs.mkdirSync(SHOTS, {recursive:true});
+      const {data} = await send('Page.captureScreenshot', {captureBeyondViewport:true});
+      fs.writeFileSync(path.join(SHOTS, 'resultat.png'), Buffer.from(data, 'base64'));
+    }
+    // Sans les limites estimées, il ne reste que les pancartes (et leurs alertes)
+    await evaluate(`keepLimitsInput.checked=false; keepLimitsInput.dispatchEvent(new Event('change'))`);
+    assert(await evaluate(`waypoints.every(w => w.kind!=='limit')`), 'limites encore présentes');
 
     assert(!(await evaluate('launchBtn.disabled')), 'bouton Lancer resté désactivé');
-    const csv = await evaluate(`Core.toCSV([...foundWaypoints, ...alertWaypoints].sort((a,b)=>a.dist-b.dist))`);
-    console.log('CSV :\n' + csv.replace('\uFEFF',''));
-
     assert(errors.length === 0, 'erreurs JavaScript : ' + errors.join(' / '));
     console.log('\nE2E OK');
   }finally{

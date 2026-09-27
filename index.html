@@ -210,7 +210,7 @@ details.advanced .params{margin-top:10px;}
   <header>
     <div class="eyebrow">Outil GPX &middot; 100% navigateur</div>
     <h1>Pancartes d'entrée de commune</h1>
-    <p>Détecte automatiquement chaque franchissement de limite communale le long d'un tracé GPX, et génère un nouveau fichier avec un waypoint "Entrée [Commune]" à chaque frontière. Aucune installation : tout tourne dans cette page, via l'API OpenStreetMap.</p>
+    <p>Repère les panneaux d'entrée d'agglomération le long d'un tracé GPX grâce à OpenStreetMap, et génère un nouveau fichier avec un waypoint "Entrée [Lieu]" à chaque pancarte. Là où aucun panneau n'est cartographié, la limite de commune sert d'estimation. Aucune installation : tout tourne dans cette page.</p>
   </header>
 
   <div class="step" id="step1">
@@ -241,7 +241,7 @@ details.advanced .params{margin-top:10px;}
           <option value="full">Complets</option>
           <option value="compact">GPS compact</option>
         </select>
-        <span class="hint">Complets : « Entrée Saint-Herblain ». Compact : « St-Herblain », sans accents ni emoji, 15 caractères max (Garmin, Wahoo).</span>
+        <span class="hint">Complets : « Entrée Saint-Herblain », « Limite Couëron ». Compact : « St-Herblain », « ~Coueron », sans accents ni emoji, 15 caractères max (Garmin, Wahoo).</span>
       </div>
       <div>
         <label class="field-label" for="alertInput">Alerte avant pancarte (m)</label>
@@ -258,8 +258,17 @@ details.advanced .params{margin-top:10px;}
       <summary>Options avancées</summary>
       <div class="params">
         <div>
+          <label class="field-label"><input type="checkbox" id="keepLimitsInput" checked> Limites de commune sans pancarte</label>
+          <span class="hint">Ajoute une estimation (« Limite X ») quand aucun panneau n'est cartographié pour une commune traversée.</span>
+        </div>
+        <div>
+          <label class="field-label" for="signDistInput">Distance panneau–tracé max (m)</label>
+          <input type="number" id="signDistInput" value="25" min="5" max="60" step="5">
+          <span class="hint">Un panneau OSM plus loin du tracé est ignoré.</span>
+        </div>
+        <div>
           <label class="field-label" for="minStayInput">Passage minimal (m)</label>
-          <input type="number" id="minStayInput" value="50" min="0" max="1000" step="10">
+          <input type="number" id="minStayInput" value="150" min="0" max="1000" step="10">
           <span class="hint">Ignore les incursions plus courtes (route qui longe une limite).</span>
         </div>
         <div>
@@ -290,7 +299,7 @@ details.advanced .params{margin-top:10px;}
     <span class="step-num">4</span>
     <h2>Résultat <span class="badge" id="countBadge" style="display:none;"></span></h2>
     <div class="print-only" id="printTitle"></div>
-    <div id="resultsArea"><div class="empty-note">Les entrées de commune détectées apparaîtront ici.</div></div>
+    <div id="resultsArea"><div class="empty-note">Les pancartes détectées apparaîtront ici.</div></div>
     <div class="result-actions" id="downloadArea" style="display:none;">
       <button class="secondary" id="downloadBtn">Télécharger le GPX enrichi</button>
       <button class="secondary" id="csvBtn">CSV</button>
@@ -299,8 +308,9 @@ details.advanced .params{margin-top:10px;}
   </div>
 
   <footer>
-    Données © contributeurs OpenStreetMap. Méthode rapide : limites communales téléchargées en une requête via l'API Overpass, puis calcul local des franchissements (précision ~1 m). Méthode lente : géocodage inverse point par point via Nominatim (~1 requête/s) — utilisée automatiquement si Overpass ne répond pas.
-    Le fichier exporté conserve l'intégralité du GPX d'origine (horodatages, waypoints existants, extensions) ; seuls les waypoints de pancarte et d'alerte sont ajoutés.
+    Données © contributeurs OpenStreetMap. Méthode rapide : panneaux d'agglomération (<code>traffic_sign=city_limit</code>) et limites communales téléchargés en une requête via l'API Overpass, puis calcul local (précision ~1 m). Le sens entrée/sortie d'un panneau est déduit de son orientation, du côté de la route, ou de la position du centre du lieu. Méthode lente : limites de commune seulement, par géocodage inverse point par point via Nominatim (~1 requête/s) — utilisée automatiquement si Overpass ne répond pas.
+    Une pancarte manque ? <a href="https://wiki.openstreetmap.org/wiki/FR:Tag:traffic_sign%3Dcity_limit" target="_blank" rel="noopener">Ajoute-la dans OpenStreetMap</a> : elle sera prise en compte à la prochaine analyse.
+    Le fichier exporté conserve l'intégralité du GPX d'origine (horodatages, waypoints existants, extensions) ; seuls les waypoints ajoutés sont nouveaux.
   </footer>
 </div>
 
@@ -318,10 +328,19 @@ const OVERPASS_URLS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass-api.de/api/interpreter'
 ];
-const SYM = {sign:'City (Small)', alert:'Danger Area'}; // noms de symboles Garmin, reconnus par la plupart des applis
+// Noms de symboles Garmin, reconnus par la plupart des applis
+const SYM = {sign:'City (Small)', limit:'Flag, Blue', alert:'Danger Area'};
+const GPX_TYPE = {sign:'Pancarte', limit:'Limite de commune', alert:'Alerte pancarte'};
+const COLORS = {sign:'#3E5C43', limit:'#4A6FA5', alert:'#C9922E'};
+const METHOD_TEXT = {
+  'orientation': "sens d'après l'orientation du panneau",
+  'côté': "sens d'après le côté de la route",
+  'centre': "sens d'après la position du centre du lieu",
+  'alternance': "sens deviné (alternance entrée/sortie) — à vérifier",
+};
 
 let srcDoc = null, trkpts = [], cum = [], trackName = "Track", srcFileName = "track";
-let crossings = [], foundWaypoints = [], alertWaypoints = [], finalGpxText = "";
+let crossings = [], osmData = null, waypoints = [], finalGpxText = "";
 let running = false, stopRequested = false, currentAbort = null;
 const geoCache = new Map();
 
@@ -330,21 +349,26 @@ const fileInput = $('fileInput'), dropzone = $('dropzone'), dzText = $('dzText')
 const step1 = $('step1'), step2 = $('step2'), step3 = $('step3'), step4 = $('step4');
 const methodSelect = $('methodSelect'), styleSelect = $('styleSelect');
 const stepInput = $('stepInput'), alertInput = $('alertInput'), minStayInput = $('minStayInput'), levelInput = $('levelInput');
+const keepLimitsInput = $('keepLimitsInput'), signDistInput = $('signDistInput');
 const estimate = $('estimate'), launchBtn = $('launchBtn'), stopBtn = $('stopBtn');
 const barFill = $('barFill'), progressLabel = $('progressLabel'), progressPct = $('progressPct'), logEl = $('log');
 const resultsArea = $('resultsArea'), downloadArea = $('downloadArea'), countBadge = $('countBadge');
 
 // ---------- Préférences (mémorisées localement) ----------
-const PREF_FIELDS = {methodSelect, styleSelect, stepInput, alertInput, minStayInput, levelInput};
+const PREF_FIELDS = {methodSelect, styleSelect, stepInput, alertInput, minStayInput, levelInput, keepLimitsInput, signDistInput};
+const PREFS_KEY = 'pancartes-prefs-v2';
 try{
-  const prefs = JSON.parse(localStorage.getItem('pancartes-prefs') || '{}');
-  Object.entries(prefs).forEach(([k,v]) => { if(PREF_FIELDS[k]) PREF_FIELDS[k].value = v; });
+  const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+  Object.entries(prefs).forEach(([k,v]) => {
+    const el = PREF_FIELDS[k];
+    if(el) el.type==='checkbox' ? el.checked = v : el.value = v;
+  });
 }catch(e){}
 function savePrefs(){
   try{
     const prefs = {};
-    Object.entries(PREF_FIELDS).forEach(([k,el]) => prefs[k] = el.value);
-    localStorage.setItem('pancartes-prefs', JSON.stringify(prefs));
+    Object.entries(PREF_FIELDS).forEach(([k,el]) => prefs[k] = el.type==='checkbox' ? el.checked : el.value);
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
   }catch(e){}
 }
 Object.values(PREF_FIELDS).forEach(el => el.addEventListener('change', savePrefs));
@@ -371,9 +395,12 @@ function showMarkersOnMap(list){
   markerLayer.clearLayers();
   list.forEach(w=>{
     w.marker = L.circleMarker([w.lat,w.lon], {
-      radius: w.isAlert ? 5 : 7,
-      color: w.isAlert ? '#C9922E' : '#3E5C43', fillOpacity:.9, weight:2
-    }).bindPopup(`<b>${escapeHtml(w.name)}</b><br>km ${(w.dist/1000).toFixed(2)}`).addTo(markerLayer);
+      radius: w.kind==='alert' ? 5 : 7,
+      color: COLORS[w.kind], fillOpacity:.9, weight:2,
+      dashArray: w.kind==='limit' || w.certain===false ? '3 3' : null
+    }).bindPopup(`<b>${escapeHtml(w.name)}</b><br>${escapeHtml(w.desc)}` +
+      (w.osmId ? `<br><a href="https://www.openstreetmap.org/node/${w.osmId}" target="_blank" rel="noopener">voir le panneau sur OSM</a>` : '')
+    ).addTo(markerLayer);
   });
 }
 
@@ -440,8 +467,8 @@ function updateEstimate(){
   const slow = methodSelect.value === 'nominatim';
   $('stepField').hidden = !slow;
   $('methodHint').textContent = slow
-    ? "Interroge Nominatim tous les N mètres. Plusieurs minutes pour 100 km."
-    : "Télécharge les limites des communes traversées en une fois. Quelques secondes, précision ~1 m.";
+    ? "Limites de commune seulement, via Nominatim tous les N mètres. Plusieurs minutes pour 100 km."
+    : "Pancartes cartographiées dans OSM + limites de commune, téléchargées en une fois. Quelques secondes.";
   if(!cum.length) return;
   const total = totalDist();
   let txt = `Distance totale : <b>${(total/1000).toFixed(1)} km</b> — `;
@@ -461,10 +488,12 @@ updateEstimate();
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 class StopError extends Error {}
 
-// Limites communales le long du tracé via Overpass. Renvoie null si aucun serveur ne répond.
-async function fetchCommunes(){
+// Limites communales, panneaux et lieux le long du tracé via Overpass.
+// Renvoie null si aucun serveur ne répond.
+async function fetchOsm(){
   const level = Math.round(parseFloat(levelInput.value)) || 8;
-  const query = Core.buildOverpassQuery(trkpts, level);
+  // Rayon maximal pour les panneaux, pour pouvoir changer le réglage sans retélécharger
+  const query = Core.buildOverpassQuery(trkpts, level, {signs:true, maxSignDist:60});
   for(const [i, url] of OVERPASS_URLS.entries()){
     if(i>0) await sleep(3000);
     if(stopRequested) throw new StopError();
@@ -473,11 +502,11 @@ async function fetchCommunes(){
     currentAbort = ctrl;
     const timer = setTimeout(()=>ctrl.abort(), 120000);
     try{
-      logMsg(`Téléchargement des limites communales (${host})…`);
+      logMsg(`Téléchargement des données OpenStreetMap (${host})…`);
       const resp = await fetch(url, {method:'POST', body:new URLSearchParams({data:query}), signal:ctrl.signal});
       if(!resp.ok) throw new Error('HTTP '+resp.status);
       const json = await resp.json();
-      return Core.communesFromOverpass(json);
+      return Core.parseOverpass(json);
     }catch(e){
       if(stopRequested) throw new StopError();
       logMsg(`⚠ ${host} : ${e.name==='AbortError' ? 'délai dépassé' : e.message}`);
@@ -574,8 +603,8 @@ stopBtn.addEventListener('click', ()=>{
 });
 
 function resetResults(){
-  crossings = []; foundWaypoints = []; alertWaypoints = []; finalGpxText = "";
-  resultsArea.innerHTML = '<div class="empty-note">Les entrées de commune détectées apparaîtront ici.</div>';
+  crossings = []; osmData = null; waypoints = []; finalGpxText = "";
+  resultsArea.innerHTML = '<div class="empty-note">Les pancartes détectées apparaîtront ici.</div>';
   downloadArea.style.display = "none";
   countBadge.style.display = "none";
   step4.classList.add('disabled');
@@ -620,15 +649,17 @@ async function analyse(){
   const total = totalDist();
   const onCrossing = c => {
     crossings.push(c);
-    logMsg(`→ frontière à ${(c.dist/1000).toFixed(2)} km : ${c.from} → ${c.to}`);
+    // En méthode rapide, le calcul est instantané : le détail des limites brutes n'apporte rien
+    if(methodSelect.value === 'nominatim' || !osmData) logMsg(`→ limite de commune à ${(c.dist/1000).toFixed(2)} km : ${c.from} → ${c.to}`);
   };
 
   if(methodSelect.value === 'overpass'){
-    setProgress(5, "Téléchargement des limites communales…");
-    const communes = await fetchCommunes();
-    if(communes && communes.length){
-      logMsg(`${communes.length} commune${communes.length>1?'s':''} chargée${communes.length>1?'s':''}.`);
-      const locate = Core.makeLocator(communes);
+    setProgress(5, "Téléchargement des données OpenStreetMap…");
+    const data = await fetchOsm();
+    if(data && data.communes.length){
+      const locate = Core.makeLocator(data.communes);
+      osmData = {signs:data.signs, places:data.places, locate};
+      logMsg(`${data.communes.length} commune${data.communes.length>1?'s':''} et ${data.signs.length} panneau${data.signs.length>1?'x':''} d'agglomération à proximité.`);
       setProgress(40, "Calcul des franchissements…");
       await sleep(0);
       await Core.findCrossings(d => locate(pointAtDistance(d)), total, LOCAL_STEP, LOCAL_PRECISION, {
@@ -641,12 +672,15 @@ async function analyse(){
         },
         onCrossing
       });
+      const signs = resolveSigns();
+      const entries = signs.filter(s => s.entry).length;
+      logMsg(`Panneaux sur le tracé : ${entries} entrée${entries>1?'s':''}, ${signs.length-entries} sortie${signs.length-entries>1?'s':''}.`);
       return;
     }
-    logMsg(communes ? "Aucune limite communale trouvée → bascule sur la méthode lente." : "Overpass indisponible → bascule sur la méthode lente.");
+    logMsg(data ? "Aucune limite communale trouvée → bascule sur la méthode lente." : "Overpass indisponible → bascule sur la méthode lente.");
   }
 
-  // Méthode lente : Nominatim point par point
+  // Méthode lente : Nominatim point par point (limites de commune seulement)
   const t0 = Date.now();
   await Core.findCrossings(communeAt, total, getStep(), NOMINATIM_PRECISION, {
     onSample: (i, n, d, name) => {
@@ -659,71 +693,104 @@ async function analyse(){
   });
 }
 
-// ---------- Waypoints & résultats ----------
-alertInput.addEventListener('input', ()=>{ if(!running && crossings.length) buildWaypoints(); });
-minStayInput.addEventListener('input', ()=>{ if(!running && crossings.length) buildWaypoints(); });
-styleSelect.addEventListener('change', ()=>{ if(!running && crossings.length) buildWaypoints(); });
+// Panneaux OSM croisés par le tracé, avec leur sens (entrée/sortie).
+function resolveSigns(){
+  if(!osmData) return [];
+  const maxDist = Math.max(5, parseFloat(signDistInput.value) || 25);
+  const passes = Core.findSignPasses(trkpts, cum, osmData.signs, maxDist);
+  return Core.resolveSigns(passes, osmData.places, trkpts, cum, osmData.locate);
+}
 
-// Construit pancartes et alertes à partir des frontières brutes (sans relancer l'analyse).
+// ---------- Waypoints & résultats ----------
+[alertInput, minStayInput, signDistInput].forEach(el => el.addEventListener('input', ()=>{ if(!running && trkpts.length) buildWaypoints(); }));
+[styleSelect, keepLimitsInput].forEach(el => el.addEventListener('change', ()=>{ if(!running && trkpts.length) buildWaypoints(); }));
+
+// Construit pancartes, limites et alertes à partir des données brutes (sans relancer l'analyse).
 function buildWaypoints(){
   const style = styleSelect.value;
+  const total = totalDist();
   const minStay = Math.max(0, parseFloat(minStayInput.value) || 0);
-  const kept = Core.filterShortRuns([...crossings].sort((a,b)=>a.dist-b.dist), totalDist(), minStay);
-  foundWaypoints = kept.map(c => {
-    const pt = pointAtDistance(c.dist);
-    return {dist:c.dist, lat:pt.lat, lon:pt.lon, from:c.from, to:c.to, isAlert:false,
-            name:Core.waypointName('sign', c.to, style)};
+  const kept = Core.filterShortRuns([...crossings].sort((a,b)=>a.dist-b.dist), total, minStay);
+  // Sans données de panneaux (méthode lente), les limites de commune sont le seul résultat possible
+  const keepLimits = keepLimitsInput.checked || !osmData;
+  const main = Core.mergeWaypoints(kept, resolveSigns(), total, keepLimits).map(w => {
+    const km = (w.dist/1000).toFixed(2);
+    if(w.kind==='limit'){
+      const pt = pointAtDistance(w.dist);
+      w.lat = pt.lat; w.lon = pt.lon;
+      w.desc = `km ${km} — limite de commune : ${w.label}` + (w.from ? ` (depuis ${w.from})` : '') +
+               (osmData ? ", pas de pancarte cartographiée" : '');
+    }else{
+      w.desc = `km ${km} — pancarte ${w.label} (OSM, ${METHOD_TEXT[w.method]})`;
+    }
+    w.name = Core.waypointName(w.kind, w.label, style);
+    return w;
   });
 
-  // Waypoints d'alerte placés `alertDist` mètres avant chaque frontière
-  alertWaypoints = [];
+  // Alertes placées `alertDist` mètres avant chaque pancarte / limite
+  const alerts = [];
   const alertDist = Math.max(0, Math.round(parseFloat(alertInput.value) || 0));
   if(alertDist > 0){
-    foundWaypoints.forEach(w=>{
+    main.forEach(w => {
       const d = Math.max(0, w.dist - alertDist);
       const pt = pointAtDistance(d);
-      alertWaypoints.push({dist:d, lat:pt.lat, lon:pt.lon, from:w.from, to:w.to, isAlert:true, signDist:w.dist,
-                           name:Core.waypointName('alert', w.to, style, alertDist)});
+      alerts.push({kind:'alert', dist:d, lat:pt.lat, lon:pt.lon, label:w.label,
+        name: Core.waypointName('alert', w.label, style, alertDist),
+        desc: `km ${(d/1000).toFixed(2)} — ${w.kind==='limit' ? 'limite de commune' : 'pancarte'} ${w.label} dans ${Math.round(w.dist-d)} m`});
     });
   }
+  waypoints = [...main, ...alerts].sort((a,b) => a.dist-b.dist || (a.kind==='alert' ? -1 : 1));
   renderResults();
 }
 
 function renderResults(){
-  if(!foundWaypoints.length){
-    resultsArea.innerHTML = '<div class="empty-note">Aucun changement de commune détecté sur ce tracé.</div>';
+  const nSigns = waypoints.filter(w => w.kind==='sign').length;
+  const nLimits = waypoints.filter(w => w.kind==='limit').length;
+  const nAlerts = waypoints.filter(w => w.kind==='alert').length;
+  if(!nSigns && !nLimits){
+    resultsArea.innerHTML = crossings.length || osmData
+      ? '<div class="empty-note">Aucune pancarte ni limite de commune trouvée sur ce tracé.</div>'
+      : '<div class="empty-note">Les pancartes détectées apparaîtront ici.</div>';
     countBadge.style.display = "none";
     downloadArea.style.display = "none";
     showMarkersOnMap([]);
     return;
   }
+  const plural = (n, w) => `${n} ${w}${n>1?'s':''}`;
   countBadge.style.display = "inline-block";
-  countBadge.textContent = foundWaypoints.length + " pancarte" + (foundWaypoints.length>1?"s":"") +
-    (alertWaypoints.length ? ` + ${alertWaypoints.length} alerte${alertWaypoints.length>1?"s":""}` : "");
-
-  const merged = [...foundWaypoints, ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
-  showMarkersOnMap(merged);
+  countBadge.textContent = [nSigns && plural(nSigns,'pancarte'), nLimits && plural(nLimits,'limite'), nAlerts && plural(nAlerts,'alerte')]
+    .filter(Boolean).join(' + ');
+  showMarkersOnMap(waypoints);
 
   $('printTitle').textContent = `${trackName} — ${(totalDist()/1000).toFixed(1)} km`;
-  let html = '<div class="table-wrap"><table><thead><tr><th>Km</th><th>Type</th><th>Commune</th><th>Nom GPS</th></tr></thead><tbody>';
-  merged.forEach((w,i)=>{
-    const type = w.isAlert ? '⚠ alerte' : '🚩 pancarte';
-    html += `<tr data-i="${i}"><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.to)}</td><td>${escapeHtml(w.name)}</td></tr>`;
+  const TYPE_LABEL = {sign:'🚩 pancarte', limit:'📍 limite', alert:'⚠ alerte'};
+  let html = '<div class="table-wrap"><table><thead><tr><th>Km</th><th>Type</th><th>Lieu</th><th>Nom GPS</th></tr></thead><tbody>';
+  waypoints.forEach((w,i)=>{
+    const type = TYPE_LABEL[w.kind] + (w.certain===false ? ' <span title="sens deviné, à vérifier">(?)</span>' : '');
+    html += `<tr data-i="${i}" title="${escapeHtml(w.desc)}"><td class="km">${(w.dist/1000).toFixed(2)}</td><td>${type}</td><td>${escapeHtml(w.label)}</td><td>${escapeHtml(w.name)}</td></tr>`;
   });
   html += '</tbody></table></div>';
+  if(osmData && nLimits){
+    html += `<div class="estimate">📍 Limite = estimation à la frontière de commune, faute de panneau cartographié dans OpenStreetMap. La vraie pancarte est souvent plus loin, à l'entrée du bourg.</div>`;
+  }else if(!osmData){
+    html += `<div class="estimate">Méthode lente : seules les limites de commune sont connues, pas les pancartes réelles.</div>`;
+  }
+  if(waypoints.some(w => w.certain===false)){
+    html += `<div class="estimate">(?) = sens entrée/sortie deviné par alternance, à vérifier sur la carte.</div>`;
+  }
   resultsArea.innerHTML = html;
   resultsArea.querySelectorAll('tbody tr').forEach(tr=>{
     tr.addEventListener('click', ()=>{
-      const w = merged[+tr.dataset.i];
+      const w = waypoints[+tr.dataset.i];
       if(map && w.marker){
-        map.setView([w.lat, w.lon], 15);
+        map.setView([w.lat, w.lon], 16);
         w.marker.openPopup();
         $('map').scrollIntoView({behavior:'smooth', block:'center'});
       }
     });
   });
 
-  finalGpxText = buildGPX(merged);
+  finalGpxText = buildGPX(waypoints);
   downloadArea.style.display = "flex";
 }
 
@@ -737,14 +804,10 @@ function buildGPX(wpts){
 
   const el = (tag, text) => { const e = doc.createElementNS(ns, tag); if(text!=null) e.textContent = text; return e; };
   wpts.forEach(w=>{
-    const km = (w.dist/1000).toFixed(2);
-    const desc = w.isAlert
-      ? `km ${km} — entrée dans ${w.to} dans ${Math.round(w.signDist-w.dist)} m`
-      : `km ${km} — entrée dans ${w.to}` + (w.from ? ` (depuis ${w.from})` : '');
     const wpt = el('wpt');
     wpt.setAttribute('lat', w.lat.toFixed(6));
     wpt.setAttribute('lon', w.lon.toFixed(6));
-    [['name', w.name], ['desc', desc], ['sym', w.isAlert ? SYM.alert : SYM.sign], ['type', w.isAlert ? 'Alerte pancarte' : 'Pancarte']]
+    [['name', w.name], ['desc', w.desc], ['sym', SYM[w.kind]], ['type', GPX_TYPE[w.kind]]]
       .forEach(([tag, text]) => {
         wpt.appendChild(doc.createTextNode('\n    '));
         wpt.appendChild(el(tag, text));
@@ -763,8 +826,7 @@ $('downloadBtn').addEventListener('click', ()=>{
   download(finalGpxText, 'application/gpx+xml', srcFileName + "_pancartes.gpx");
 });
 $('csvBtn').addEventListener('click', ()=>{
-  const rows = [...foundWaypoints, ...alertWaypoints].sort((a,b)=>a.dist-b.dist);
-  download(Core.toCSV(rows), 'text/csv;charset=utf-8', srcFileName + "_pancartes.csv");
+  download(Core.toCSV(waypoints), 'text/csv;charset=utf-8', srcFileName + "_pancartes.csv");
 });
 $('printBtn').addEventListener('click', ()=>window.print());
 </script>

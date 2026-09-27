@@ -126,7 +126,18 @@ test('waypointName : noms complets et compacts GPS', () => {
 });
 
 test('toCSV : séparateur ; , BOM et échappement', () => {
-  const csv = Core.toCSV([{dist:1234, isAlert:false, to:'Saint-Herblain', from:'Nantes', name:'Entrée "X"', lat:47.2, lon:-1.6}]);
-  assert.ok(csv.startsWith('﻿km;type;commune'));
-  assert.match(csv, /1,23;pancarte;Saint-Herblain;Nantes;"Entrée ""X""";47\.200000;-1\.600000/);
+  const csv = Core.toCSV([
+    {dist:1234, kind:'sign', label:'Saint-Herblain', name:'Entrée "X"', desc:'a;b', lat:47.2, lon:-1.6},
+    {dist:900, kind:'limit', label:'Couëron', name:'Limite Couëron', desc:'', lat:47.2, lon:-1.6},
+  ]);
+  assert.equal(csv.charCodeAt(0), 0xFEFF);
+  assert.ok(csv.slice(1).startsWith('km;type;lieu;nom_gps;detail'));
+  assert.match(csv, /1,23;pancarte;Saint-Herblain;"Entrée ""X""";"a;b";47\.200000;-1\.600000/);
+  assert.match(csv, /0,90;limite;Couëron;Limite Couëron;;/);
+});
+
+test('waypointName : limites de commune', () => {
+  assert.equal(Core.waypointName('limit', 'Couëron', 'full'), 'Limite Couëron');
+  assert.equal(Core.waypointName('limit', 'Saint-Sébastien-sur-Loire', 'compact'), '~St-Sebastien');
+  assert.ok(Core.waypointName('limit', 'Saint-Rémy-en-Bouzemont-Saint-Genest-et-Isson', 'compact').length <= 15);
 });
